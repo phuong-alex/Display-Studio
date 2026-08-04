@@ -1,7 +1,7 @@
 {
   "product": "Display Studio",
-  "release": "Display Studio 2.0 Foundation",
-  "version": "2.0.0-foundation.1",
+  "release": "Display Studio 2.1 Runtime Queue",
+  "version": "2.1.0-runtime-queue.1",
   "protocolVersion": 3,
-  "milestone": "Transport-First Core Isolation"
+  "milestone": "Dedicated Renderer Worker"
 }
