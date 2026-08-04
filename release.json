@@ -1,7 +1,7 @@
 {
   "product": "Display Studio",
-  "release": "Sprint 1.3",
-  "version": "1.3.0-sprint.1.3",
+  "release": "Sprint 1.4",
+  "version": "1.4.0-sprint.1.4",
   "protocolVersion": 3,
-  "milestone": "Queued BLE Runtime"
+  "milestone": "Scene Engine Foundation"
 }
