@@ -1,7 +1,7 @@
 {
   "product": "Display Studio",
-  "release": "Display Studio 3.0 Recoverable E-Ink Driver",
-  "version": "3.0.0-recovery.1",
+  "release": "Display Studio 3.0 Recoverable Driver",
+  "version": "3.0.1-project-blob.1",
   "protocolVersion": 3,
-  "milestone": "Automatic Panel Reset and Single Retry"
+  "milestone": "Recoverable Driver and Scalable Project Blob Storage"
 }
