@@ -26,7 +26,7 @@ void Application::setup() {
     Logger::begin(Config::SERIAL_BAUD);
     Logger::info(Version::PRODUCT);
     Logger::info(Version::FIRMWARE);
-    Logger::info("Scene Engine Foundation Sprint 1.4");
+    Logger::info("Multi-Scene Manager Sprint 1.5.1");
 
     Device::deviceIdentity().begin();
     Storage::projectStorage().begin();
@@ -54,13 +54,20 @@ void Application::setup() {
     Transport::bleTransport().begin();
 
     Logger::info(
-        "Sprint 1.4 Scene runtime ready"
+        "Sprint 1.5.1 Multi-Scene runtime ready"
     );
 }
 
 void Application::loop() {
     Transport::bleTransport().loop();
-    Runtime::sceneRuntime().loop();
+
+    // A full e-ink refresh blocks the main loop. During a Studio
+    // connection, reserve the loop for BLE ACKs and responses.
+    // The explicit `apply` command still renders the active Scene.
+    if (!Transport::bleTransport().connected()) {
+        Runtime::sceneRuntime().loop();
+    }
+
     delay(20);
 }
 }
