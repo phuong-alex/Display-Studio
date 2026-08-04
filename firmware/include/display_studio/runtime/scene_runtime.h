@@ -8,7 +8,14 @@ public:
     void begin();
     bool configure(JsonVariantConst config);
     bool configured() const;
+
+    // Public callers request work through Runtime Queue.
     bool renderNow();
+
+    // Renderer Worker is the only caller allowed to execute
+    // the physical display operation.
+    bool renderImmediate();
+
     void loop();
     void clear();
 
