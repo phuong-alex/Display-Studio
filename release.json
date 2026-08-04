@@ -1,7 +1,7 @@
 {
   "product": "Display Studio",
-  "release": "Sprint 1.5.1",
-  "version": "1.5.1-sprint.1.5.1",
+  "release": "Sprint 1.5.2",
+  "version": "1.5.2-sprint.1.5.2",
   "protocolVersion": 3,
-  "milestone": "Multi-Scene Manager Runtime Fix"
+  "milestone": "Multi-Scene Renderer Recovery"
 }
