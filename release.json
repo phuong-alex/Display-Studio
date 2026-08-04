@@ -1,7 +1,7 @@
 {
   "product": "Display Studio",
-  "release": "Display Studio 2.2 Async Display Engine",
-  "version": "2.2.0-async-display.1",
+  "release": "Display Studio 3.0 Recoverable E-Ink Driver",
+  "version": "3.0.0-recovery.1",
   "protocolVersion": 3,
-  "milestone": "Serialized Display Engine"
+  "milestone": "Automatic Panel Reset and Single Retry"
 }
