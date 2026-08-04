@@ -27,6 +27,68 @@ GxEPD2_3C<
 );
 
 DisplayRenderer instance;
+
+constexpr uint32_t PANEL_READY_TIMEOUT_MS = 1500;
+constexpr uint32_t PANEL_RESET_SETTLE_MS = 120;
+
+bool panelIdle() {
+    return digitalRead(Pins::EINK_BUSY) == LOW;
+}
+
+bool waitForPanelIdle(uint32_t timeoutMs) {
+    const uint32_t startedAt = millis();
+
+    while (!panelIdle()) {
+        if (millis() - startedAt >= timeoutMs) {
+            return false;
+        }
+
+        delay(10);
+        yield();
+    }
+
+    return true;
+}
+
+void configurePanel() {
+    eink.setRotation(Config::DISPLAY_ROTATION);
+    eink.setFullWindow();
+}
+
+bool recoverPanelIfNeeded() {
+    if (waitForPanelIdle(PANEL_READY_TIMEOUT_MS)) {
+        return true;
+    }
+
+    Core::Logger::warning(
+        "E-ink BUSY before refresh; resetting panel"
+    );
+
+    pinMode(Pins::EINK_RST, OUTPUT);
+    digitalWrite(Pins::EINK_RST, LOW);
+    delay(25);
+    digitalWrite(Pins::EINK_RST, HIGH);
+    delay(PANEL_RESET_SETTLE_MS);
+
+    eink.init(
+        Config::SERIAL_BAUD,
+        true,
+        50,
+        false
+    );
+    configurePanel();
+
+    const bool recovered =
+        waitForPanelIdle(PANEL_READY_TIMEOUT_MS);
+
+    Core::Logger::info(
+        recovered
+            ? "E-ink recovery completed"
+            : "E-ink recovery failed; BUSY remains active"
+    );
+
+    return recovered;
+}
 }
 
 DisplayRenderer& displayRenderer() {
@@ -106,24 +168,22 @@ bool DisplayRenderer::begin() {
         false
     );
 
-    eink.setRotation(
-        Config::DISPLAY_ROTATION
-    );
-
-    eink.setFullWindow();
+    configurePanel();
 
     Core::Logger::info(
         "E-ink init complete; BUSY=" +
-        String(
-            digitalRead(Pins::EINK_BUSY)
-        )
+        String(digitalRead(Pins::EINK_BUSY))
     );
 
     return true;
 }
 
 void DisplayRenderer::showBootScreen() {
-    eink.setFullWindow();
+    if (!recoverPanelIfNeeded()) {
+        return;
+    }
+
+    configurePanel();
     eink.firstPage();
 
     do {
@@ -131,7 +191,7 @@ void DisplayRenderer::showBootScreen() {
 
         eink.setTextColor(GxEPD_BLACK);
         eink.setFont(&FreeSansBold12pt7b);
-        centered("Sprint 1.1", 65);
+        centered("Sprint 1.5.2", 65);
 
         eink.setFont(&FreeSans9pt7b);
         centered("Connect Bluetooth", 91);
@@ -139,9 +199,12 @@ void DisplayRenderer::showBootScreen() {
     } while (eink.nextPage());
 }
 
-void DisplayRenderer::
-showWaitingForTime() {
-    eink.setFullWindow();
+void DisplayRenderer::showWaitingForTime() {
+    if (!recoverPanelIfNeeded()) {
+        return;
+    }
+
+    configurePanel();
     eink.firstPage();
 
     do {
@@ -166,11 +229,20 @@ bool DisplayRenderer::showScene(
     const String& lunarText,
     bool redAccent
 ) {
-    eink.setRotation(
-        Config::DISPLAY_ROTATION
+    if (!recoverPanelIfNeeded()) {
+        Core::Logger::error(
+            "Scene render aborted: panel not ready"
+        );
+        return false;
+    }
+
+    configurePanel();
+
+    Core::Logger::info(
+        "Display refresh starting; BUSY=" +
+        String(digitalRead(Pins::EINK_BUSY))
     );
 
-    eink.setFullWindow();
     eink.firstPage();
 
     do {
@@ -189,9 +261,7 @@ bool DisplayRenderer::showScene(
                     : GxEPD_BLACK
             );
 
-            eink.setFont(
-                &FreeSansBold12pt7b
-            );
+            eink.setFont(&FreeSansBold12pt7b);
 
             centered(
                 hour + ":" + minute,
@@ -201,18 +271,14 @@ bool DisplayRenderer::showScene(
 
         if (showCalendar) {
             eink.setTextColor(GxEPD_BLACK);
-            eink.setFont(
-                &FreeSansBold12pt7b
-            );
+            eink.setFont(&FreeSansBold12pt7b);
 
             centered(
                 weekday,
                 showClock ? 74 : 47
             );
 
-            eink.setFont(
-                &FreeSans9pt7b
-            );
+            eink.setFont(&FreeSans9pt7b);
 
             centered(
                 dateText,
@@ -229,14 +295,12 @@ bool DisplayRenderer::showScene(
     } while (eink.nextPage());
 
     const bool ok =
-        digitalRead(Pins::EINK_BUSY) ==
-        LOW;
+        waitForPanelIdle(PANEL_READY_TIMEOUT_MS);
 
     Core::Logger::info(
         "Display render complete; BUSY=" +
-        String(
-            digitalRead(Pins::EINK_BUSY)
-        )
+        String(digitalRead(Pins::EINK_BUSY)) +
+        (ok ? "" : "; panel did not return idle")
     );
 
     return ok;
