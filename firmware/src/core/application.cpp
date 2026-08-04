@@ -5,6 +5,7 @@
 #include "display_studio/core/application.h"
 #include "display_studio/core/logger.h"
 #include "display_studio/device/device_identity.h"
+#include "display_studio/display/display_engine.h"
 #include "display_studio/project/project_manager.h"
 #include "display_studio/renderer/display_renderer.h"
 #include "display_studio/runtime/runtime_queue.h"
@@ -28,7 +29,7 @@ void Application::setup() {
     Logger::begin(Config::SERIAL_BAUD);
     Logger::info(Version::PRODUCT);
     Logger::info(Version::FIRMWARE);
-    Logger::info("Display Studio 2.1 Runtime Queue");
+    Logger::info("Display Studio 2.2 Async Display Engine");
 
     Device::deviceIdentity().begin();
     Storage::projectStorage().begin();
@@ -36,7 +37,6 @@ void Application::setup() {
     Runtime::sceneRuntime().begin();
     Project::projectManager().begin();
 
-    // Transport is available before display and storage work.
     Transport::bleTransport().begin();
     Logger::info("V2 transport online");
 
@@ -47,13 +47,18 @@ void Application::setup() {
         );
     }
 
+    if (!Display::displayEngine().begin()) {
+        Logger::error(
+            "Display Engine failed; render requests unavailable"
+        );
+    }
+
     if (!Runtime::runtimeQueue().begin()) {
         Logger::error(
             "Runtime Queue failed; render requests unavailable"
         );
     }
 
-    // Loading configures only the active Scene. It does not render.
     if (Project::projectManager().load()) {
         Logger::info(
             "Stored Project ready; waiting for Runtime operation"
@@ -65,13 +70,11 @@ void Application::setup() {
     }
 
     Logger::info(
-        "Display Studio 2.1 queued runtime ready"
+        "Display Studio 2.2 display runtime ready"
     );
 }
 
 void Application::loop() {
-    // Blocking display work runs in the dedicated Renderer Worker.
-    // The Arduino loop stays available for BLE ACK and response pumping.
     Transport::bleTransport().loop();
     delay(2);
 }
