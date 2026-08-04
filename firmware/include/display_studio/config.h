@@ -17,5 +17,7 @@ inline constexpr const char* BLE_RX_UUID =
 inline constexpr const char* BLE_TX_UUID =
     "7fb90003-6f3e-4e65-9c7a-f13827b6a001";
 
-inline constexpr size_t MAX_PROJECT_BYTES = 8192;
+// Project payloads are persisted as NVS blobs. Keep an explicit limit so
+// malformed or unexpectedly large Studio payloads cannot exhaust heap.
+inline constexpr size_t MAX_PROJECT_BYTES = 32768;
 }
