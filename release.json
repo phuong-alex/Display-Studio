@@ -1,7 +1,7 @@
 {
   "product": "Display Studio",
-  "release": "Sprint 1.5.2",
-  "version": "1.5.2-sprint.1.5.2",
+  "release": "Sprint 1.5.3",
+  "version": "1.5.3-sprint.1.5.3",
   "protocolVersion": 3,
-  "milestone": "Multi-Scene Renderer Recovery"
+  "milestone": "E-Ink Controller Lifecycle Reset"
 }
