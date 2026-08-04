@@ -2,6 +2,7 @@
 #include <ArduinoJson.h>
 
 #include "display_studio/project/project_model.h"
+#include "display_studio/scene/scene_model.h"
 
 namespace DisplayStudio::Project {
 namespace {
@@ -10,23 +11,6 @@ constexpr const char* PROJECT_SCHEMA =
 
 constexpr const char* LEGACY_SCHEMA =
     "display-studio/device-config-v1";
-
-bool validScene(
-    JsonVariantConst scene
-) {
-    if (!scene.is<JsonObjectConst>()) {
-        return false;
-    }
-
-    const String id = String(
-        static_cast<const char*>(
-            scene["id"] | ""
-        )
-    );
-
-    return !id.isEmpty() &&
-        scene["config"].is<JsonObjectConst>();
-}
 }
 
 bool ProjectModel::isProject(
@@ -81,7 +65,6 @@ bool ProjectModel::migrateLegacy(
     scene["id"] = "main";
     scene["name"] = "Main Scene";
     scene["enabled"] = true;
-
     scene["config"].set(legacy);
 
     return true;
@@ -128,19 +111,38 @@ bool ProjectModel::validate(
 
     bool activeFound = false;
 
-    for (JsonVariantConst scene : scenes) {
-        if (!validScene(scene)) {
-            error = "invalid_scene";
+    for (size_t index = 0; index < scenes.size(); index++) {
+        const JsonVariantConst scene = scenes[index];
+        String sceneError;
+
+        if (!Scene::SceneModel::validate(scene, sceneError)) {
+            error =
+                "invalid_scene_" +
+                String(index) +
+                ":" +
+                sceneError;
             return false;
         }
 
-        const String sceneId = String(
-            static_cast<const char*>(
-                scene["id"] | ""
-            )
-        );
+        const String sceneId =
+            Scene::SceneModel::id(scene);
+
+        for (size_t previous = 0; previous < index; previous++) {
+            if (
+                Scene::SceneModel::id(scenes[previous]) ==
+                sceneId
+            ) {
+                error = "duplicate_scene_id";
+                return false;
+            }
+        }
 
         if (sceneId == activeSceneId) {
+            if (!Scene::SceneModel::enabled(scene)) {
+                error = "active_scene_disabled";
+                return false;
+            }
+
             activeFound = true;
         }
     }
@@ -168,11 +170,8 @@ JsonVariantConst ProjectModel::activeScene(
         project["scenes"].as<JsonArrayConst>()
     ) {
         if (
-            String(
-                static_cast<const char*>(
-                    scene["id"] | ""
-                )
-            ) == activeSceneId
+            Scene::SceneModel::id(scene) == activeSceneId &&
+            Scene::SceneModel::enabled(scene)
         ) {
             return scene;
         }
@@ -190,11 +189,8 @@ bool ProjectModel::setActiveScene(
         project["scenes"].as<JsonArrayConst>()
     ) {
         if (
-            String(
-                static_cast<const char*>(
-                    scene["id"] | ""
-                )
-            ) == sceneId
+            Scene::SceneModel::id(scene) == sceneId &&
+            Scene::SceneModel::enabled(scene)
         ) {
             project["activeSceneId"] = sceneId;
             return true;
