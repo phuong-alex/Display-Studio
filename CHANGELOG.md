@@ -1,5 +1,15 @@
 # Changelog
 
+## Display Studio 2.0 Foundation.1
+
+- Starts BLE transport before display initialization and Project loading.
+- Removes all boot-time e-ink refreshes from the startup path.
+- Disables automatic Scene refresh in the main loop for the V2 foundation.
+- Makes `apply` the only operation allowed to start an e-ink refresh.
+- Keeps BLE available even when display initialization fails.
+- Preserves the Project V1 schema, multi-Scene Studio and protocol version 3.
+- Reduces the main-loop delay from 20 ms to 2 ms to prioritize transport ACKs.
+
 ## Sprint 1.3
 
 - Moved command execution out of the BLE write callback.
