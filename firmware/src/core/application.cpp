@@ -16,6 +16,7 @@
 namespace DisplayStudio::Core {
 namespace {
 Application instance;
+bool displayReady = false;
 }
 
 Application& application() {
@@ -26,7 +27,7 @@ void Application::setup() {
     Logger::begin(Config::SERIAL_BAUD);
     Logger::info(Version::PRODUCT);
     Logger::info(Version::FIRMWARE);
-    Logger::info("Scene Engine Foundation Sprint 1.4");
+    Logger::info("Display Studio 2.0 Core Isolation");
 
     Device::deviceIdentity().begin();
     Storage::projectStorage().begin();
@@ -34,33 +35,33 @@ void Application::setup() {
     Runtime::sceneRuntime().begin();
     Project::projectManager().begin();
 
-    if (!Renderer::displayRenderer().begin()) {
-        Logger::error(
-            "Display initialization failed"
-        );
-        return;
-    }
-
-    if (
-        Project::projectManager().load()
-    ) {
-        Renderer::displayRenderer()
-            .showWaitingForTime();
-    } else {
-        Renderer::displayRenderer()
-            .showBootScreen();
-    }
-
+    // V2 rule: transport is online before display or storage work can block.
+    // The browser must always be able to connect, query device information,
+    // install a Project and receive command responses.
     Transport::bleTransport().begin();
+    Logger::info("V2 transport online");
 
-    Logger::info(
-        "Sprint 1.4 Scene runtime ready"
-    );
+    displayReady = Renderer::displayRenderer().begin();
+    if (!displayReady) {
+        Logger::error("Display initialization failed; BLE remains available");
+    }
+
+    // Loading configures only the active Scene. It must not refresh the panel.
+    // Rendering is an explicit operation performed by the `apply` command.
+    if (Project::projectManager().load()) {
+        Logger::info("Stored Project ready; waiting for explicit apply");
+    } else {
+        Logger::info("No Project installed; waiting for Studio");
+    }
+
+    Logger::info("Display Studio 2.0 command runtime ready");
 }
 
 void Application::loop() {
+    // V2 phase 1 deliberately does not call SceneRuntime::loop().
+    // Automatic refresh previously allowed a 30-second e-ink operation to
+    // starve BLE ACKs. Only an explicit `apply` command may render.
     Transport::bleTransport().loop();
-    Runtime::sceneRuntime().loop();
-    delay(20);
+    delay(2);
 }
 }
