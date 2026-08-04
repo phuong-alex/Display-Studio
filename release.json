@@ -1,7 +1,7 @@
 {
   "product": "Display Studio",
-  "release": "Sprint 1.6",
-  "version": "1.6.0-sprint.1.6",
+  "release": "Display Studio 2.0 Foundation",
+  "version": "2.0.0-foundation.1",
   "protocolVersion": 3,
-  "milestone": "Stable Multi-Scene Foundation"
+  "milestone": "Transport-First Core Isolation"
 }
