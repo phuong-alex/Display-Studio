@@ -29,8 +29,7 @@ String SceneRuntime::preset() const {
     );
 }
 
-uint32_t SceneRuntime::
-refreshMinutes() const {
+uint32_t SceneRuntime::refreshMinutes() const {
     return constrain(
         static_cast<uint32_t>(
             activeConfig_
@@ -79,7 +78,6 @@ bool SceneRuntime::configure(
         Core::Logger::error(
             "Unsupported Project schema"
         );
-
         return false;
     }
 
@@ -113,16 +111,13 @@ bool SceneRuntime::renderNow() {
 
     tm value;
 
-    if (
-        !timeService().getLocalTime(value)
-    ) {
+    if (!timeService().getLocalTime(value)) {
         Core::Logger::warning(
             "Cannot render: time not synchronized"
         );
 
         Renderer::displayRenderer()
             .showWaitingForTime();
-
         return false;
     }
 
@@ -131,27 +126,14 @@ bool SceneRuntime::renderNow() {
     char weekday[20];
     char dateText[20];
 
-    strftime(
-        hour,
-        sizeof(hour),
-        "%H",
-        &value
-    );
-
-    strftime(
-        minute,
-        sizeof(minute),
-        "%M",
-        &value
-    );
-
+    strftime(hour, sizeof(hour), "%H", &value);
+    strftime(minute, sizeof(minute), "%M", &value);
     strftime(
         weekday,
         sizeof(weekday),
         "%A",
         &value
     );
-
     strftime(
         dateText,
         sizeof(dateText),
@@ -173,7 +155,7 @@ bool SceneRuntime::renderNow() {
     Core::Logger::info(
         ok
             ? "Scene rendered"
-            : "Scene render failed"
+            : "Scene render failed; automatic retry deferred"
     );
 
     return ok;
@@ -199,19 +181,16 @@ void SceneRuntime::loop() {
         );
 
     const uint32_t bucket =
-        localMinute /
-        refreshMinutes();
+        localMinute / refreshMinutes();
 
-    if (
-        bucket ==
-        lastRenderBucket_
-    ) {
+    if (bucket == lastRenderBucket_) {
         return;
     }
 
-    if (renderNow()) {
-        lastRenderBucket_ = bucket;
-    }
+    // Mark the bucket before the blocking refresh. A failed BUSY wait
+    // must not trigger another 30-second refresh on every loop pass.
+    lastRenderBucket_ = bucket;
+    renderNow();
 }
 
 void SceneRuntime::clear() {
