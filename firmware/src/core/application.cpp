@@ -26,7 +26,7 @@ void Application::setup() {
     Logger::begin(Config::SERIAL_BAUD);
     Logger::info(Version::PRODUCT);
     Logger::info(Version::FIRMWARE);
-    Logger::info("Queued BLE Runtime Sprint 1.3");
+    Logger::info("Scene Engine Foundation Sprint 1.4");
 
     Device::deviceIdentity().begin();
     Storage::projectStorage().begin();
@@ -54,7 +54,7 @@ void Application::setup() {
     Transport::bleTransport().begin();
 
     Logger::info(
-        "Sprint 1.3 Project runtime ready"
+        "Sprint 1.4 Scene runtime ready"
     );
 }
 
