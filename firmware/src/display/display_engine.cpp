@@ -5,17 +5,20 @@
 
 #include "display_studio/core/logger.h"
 #include "display_studio/display/display_engine.h"
+#include "display_studio/renderer/display_renderer.h"
 #include "display_studio/runtime/scene_runtime.h"
 
 namespace DisplayStudio::Display {
 namespace {
 constexpr uint32_t FULL_REFRESH_RECOVERY_MS = 5000;
+constexpr uint32_t RECOVERY_SETTLE_MS = 1500;
 constexpr TickType_t LOCK_TIMEOUT = pdMS_TO_TICKS(1000);
 
 SemaphoreHandle_t refreshMutex = nullptr;
 volatile DisplayEngineState engineState =
     DisplayEngineState::Stopped;
 uint32_t refreshFinishedAt = 0;
+uint32_t recoveryCount = 0;
 
 DisplayEngine instance;
 }
@@ -39,9 +42,9 @@ bool DisplayEngine::begin() {
 
     engineState = DisplayEngineState::Idle;
     Core::Logger::info(
-        "Display Engine ready; recovery=" +
+        "Display Engine 3.0 ready; recovery=" +
         String(FULL_REFRESH_RECOVERY_MS) +
-        " ms"
+        " ms, retry=1"
     );
     return true;
 }
@@ -96,11 +99,46 @@ bool DisplayEngine::renderActiveScene() {
 
     engineState = DisplayEngineState::Refreshing;
     Core::Logger::info(
-        "Display Engine refresh started"
+        "Display Engine refresh attempt 1/2"
     );
 
-    const bool ok =
+    bool ok =
         Runtime::sceneRuntime().renderImmediate();
+
+    if (!ok) {
+        engineState = DisplayEngineState::Error;
+        recoveryCount++;
+
+        Core::Logger::warning(
+            "Display refresh failed; starting controller recovery #" +
+            String(recoveryCount)
+        );
+
+        const bool recovered =
+            Renderer::displayRenderer()
+                .recoverController();
+
+        if (recovered) {
+            vTaskDelay(
+                pdMS_TO_TICKS(
+                    RECOVERY_SETTLE_MS
+                )
+            );
+
+            engineState =
+                DisplayEngineState::Refreshing;
+            Core::Logger::info(
+                "Display Engine refresh attempt 2/2"
+            );
+
+            ok = Runtime::sceneRuntime()
+                .renderImmediate();
+        } else {
+            Core::Logger::error(
+                "Display controller recovery unavailable"
+            );
+        }
+    }
 
     refreshFinishedAt = millis();
     engineState = ok
@@ -110,12 +148,11 @@ bool DisplayEngine::renderActiveScene() {
     Core::Logger::info(
         ok
             ? "Display Engine refresh completed"
-            : "Display Engine refresh failed"
+            : "Display Engine refresh failed after recovery"
     );
 
     xSemaphoreGive(refreshMutex);
 
-    // An operation failure must not permanently lock the engine.
     if (!ok) {
         engineState = DisplayEngineState::Idle;
     }
