@@ -3,6 +3,7 @@
 
 #include "display_studio/core/logger.h"
 #include "display_studio/renderer/display_renderer.h"
+#include "display_studio/runtime/runtime_queue.h"
 #include "display_studio/runtime/scene_runtime.h"
 #include "display_studio/runtime/time_service.h"
 
@@ -21,21 +22,16 @@ void SceneRuntime::begin() {
 String SceneRuntime::preset() const {
     return String(
         static_cast<const char*>(
-            activeConfig_
-                ["scene"]
-                ["preset"] |
+            activeConfig_["scene"]["preset"] |
             "clock-calendar"
         )
     );
 }
 
-uint32_t SceneRuntime::
-refreshMinutes() const {
+uint32_t SceneRuntime::refreshMinutes() const {
     return constrain(
         static_cast<uint32_t>(
-            activeConfig_
-                ["scene"]
-                ["runtime"]
+            activeConfig_["scene"]["runtime"]
                 ["refreshMinutes"] | 5
         ),
         1UL,
@@ -46,9 +42,7 @@ refreshMinutes() const {
 bool SceneRuntime::redAccent() const {
     return String(
         static_cast<const char*>(
-            activeConfig_
-                ["scene"]
-                ["appearance"]
+            activeConfig_["scene"]["appearance"]
                 ["accent"] | "red"
         )
     ) == "red";
@@ -57,9 +51,7 @@ bool SceneRuntime::redAccent() const {
 String SceneRuntime::lunarText() const {
     return String(
         static_cast<const char*>(
-            activeConfig_
-                ["scene"]
-                ["content"]
+            activeConfig_["scene"]["content"]
                 ["lunarText"] | ""
         )
     );
@@ -73,13 +65,11 @@ bool SceneRuntime::configure(
             static_cast<const char*>(
                 config["schema"] | ""
             )
-        ) !=
-        "display-studio/device-config-v1"
+        ) != "display-studio/device-config-v1"
     ) {
         Core::Logger::error(
             "Unsupported Project schema"
         );
-
         return false;
     }
 
@@ -95,7 +85,6 @@ bool SceneRuntime::configure(
         String(refreshMinutes()) +
         " min"
     );
-
     return true;
 }
 
@@ -104,6 +93,10 @@ bool SceneRuntime::configured() const {
 }
 
 bool SceneRuntime::renderNow() {
+    return runtimeQueue().enqueueRender();
+}
+
+bool SceneRuntime::renderImmediate() {
     if (!configured_) {
         Core::Logger::warning(
             "Cannot render: Project not configured"
@@ -113,16 +106,10 @@ bool SceneRuntime::renderNow() {
 
     tm value;
 
-    if (
-        !timeService().getLocalTime(value)
-    ) {
+    if (!timeService().getLocalTime(value)) {
         Core::Logger::warning(
             "Cannot render: time not synchronized"
         );
-
-        Renderer::displayRenderer()
-            .showWaitingForTime();
-
         return false;
     }
 
@@ -131,27 +118,14 @@ bool SceneRuntime::renderNow() {
     char weekday[20];
     char dateText[20];
 
-    strftime(
-        hour,
-        sizeof(hour),
-        "%H",
-        &value
-    );
-
-    strftime(
-        minute,
-        sizeof(minute),
-        "%M",
-        &value
-    );
-
+    strftime(hour, sizeof(hour), "%H", &value);
+    strftime(minute, sizeof(minute), "%M", &value);
     strftime(
         weekday,
         sizeof(weekday),
         "%A",
         &value
     );
-
     strftime(
         dateText,
         sizeof(dateText),
@@ -175,7 +149,6 @@ bool SceneRuntime::renderNow() {
             ? "Scene rendered"
             : "Scene render failed"
     );
-
     return ok;
 }
 
@@ -192,24 +165,19 @@ void SceneRuntime::loop() {
             (
                 time(nullptr) +
                 timeService()
-                    .timezoneOffsetMinutes() *
-                    60
-            ) /
-            60
+                    .timezoneOffsetMinutes() * 60
+            ) / 60
         );
 
     const uint32_t bucket =
-        localMinute /
-        refreshMinutes();
+        localMinute / refreshMinutes();
 
-    if (
-        bucket ==
-        lastRenderBucket_
-    ) {
+    if (bucket == lastRenderBucket_) {
         return;
     }
 
-    if (renderNow()) {
+    // Scheduler path also queues work; it never calls the driver.
+    if (runtimeQueue().enqueueRender()) {
         lastRenderBucket_ = bucket;
     }
 }

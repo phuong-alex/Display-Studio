@@ -7,6 +7,7 @@
 #include "display_studio/device/device_identity.h"
 #include "display_studio/project/project_manager.h"
 #include "display_studio/renderer/display_renderer.h"
+#include "display_studio/runtime/runtime_queue.h"
 #include "display_studio/runtime/scene_runtime.h"
 #include "display_studio/runtime/time_service.h"
 #include "display_studio/storage/project_storage.h"
@@ -27,7 +28,7 @@ void Application::setup() {
     Logger::begin(Config::SERIAL_BAUD);
     Logger::info(Version::PRODUCT);
     Logger::info(Version::FIRMWARE);
-    Logger::info("Display Studio 2.0 Core Isolation");
+    Logger::info("Display Studio 2.1 Runtime Queue");
 
     Device::deviceIdentity().begin();
     Storage::projectStorage().begin();
@@ -35,32 +36,42 @@ void Application::setup() {
     Runtime::sceneRuntime().begin();
     Project::projectManager().begin();
 
-    // V2 rule: transport is online before display or storage work can block.
-    // The browser must always be able to connect, query device information,
-    // install a Project and receive command responses.
+    // Transport is available before display and storage work.
     Transport::bleTransport().begin();
     Logger::info("V2 transport online");
 
     displayReady = Renderer::displayRenderer().begin();
     if (!displayReady) {
-        Logger::error("Display initialization failed; BLE remains available");
+        Logger::error(
+            "Display initialization failed; BLE remains available"
+        );
     }
 
-    // Loading configures only the active Scene. It must not refresh the panel.
-    // Rendering is an explicit operation performed by the `apply` command.
+    if (!Runtime::runtimeQueue().begin()) {
+        Logger::error(
+            "Runtime Queue failed; render requests unavailable"
+        );
+    }
+
+    // Loading configures only the active Scene. It does not render.
     if (Project::projectManager().load()) {
-        Logger::info("Stored Project ready; waiting for explicit apply");
+        Logger::info(
+            "Stored Project ready; waiting for Runtime operation"
+        );
     } else {
-        Logger::info("No Project installed; waiting for Studio");
+        Logger::info(
+            "No Project installed; waiting for Studio"
+        );
     }
 
-    Logger::info("Display Studio 2.0 command runtime ready");
+    Logger::info(
+        "Display Studio 2.1 queued runtime ready"
+    );
 }
 
 void Application::loop() {
-    // V2 phase 1 deliberately does not call SceneRuntime::loop().
-    // Automatic refresh previously allowed a 30-second e-ink operation to
-    // starve BLE ACKs. Only an explicit `apply` command may render.
+    // Blocking display work runs in the dedicated Renderer Worker.
+    // The Arduino loop stays available for BLE ACK and response pumping.
     Transport::bleTransport().loop();
     delay(2);
 }
