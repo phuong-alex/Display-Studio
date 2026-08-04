@@ -1,7 +1,7 @@
 {
   "product": "Display Studio",
-  "release": "Display Studio 3.0 Recoverable Driver",
-  "version": "3.0.1-project-blob.1",
-  "protocolVersion": 3,
-  "milestone": "Recoverable Driver and Scalable Project Blob Storage"
+  "release": "Display Studio 3.0.2 Streaming Upload",
+  "version": "3.0.2-streaming-upload.1",
+  "protocolVersion": 4,
+  "milestone": "Streaming Project Upload with CRC32"
 }
