@@ -170,7 +170,7 @@ void RuntimeQueue::workerLoop() {
                 Core::Logger::info(
                     "Renderer Worker started"
                 );
-                ok = sceneRuntime().renderNow();
+                ok = sceneRuntime().renderImmediate();
                 break;
         }
 
