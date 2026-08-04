@@ -4,117 +4,159 @@
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 
 #include "display_studio/config.h"
 #include "display_studio/core/logger.h"
 #include "display_studio/device/device_identity.h"
 #include "display_studio/project/project_manager.h"
-#include "display_studio/project/project_model.h"
 #include "display_studio/runtime/scene_runtime.h"
 #include "display_studio/runtime/time_service.h"
-#include "display_studio/storage/project_storage.h"
 #include "display_studio/transport/ble_transport.h"
 #include "display_studio/version.h"
 
 namespace DisplayStudio::Transport {
 namespace {
-BLECharacteristic* txCharacteristic =
-    nullptr;
+BLECharacteristic* txCharacteristic = nullptr;
+BLEServer* bleServer = nullptr;
 
 bool clientConnected = false;
 String receiveBuffer;
-uint32_t rxChunkCount = 0;
-BleTransport instance;
+uint32_t rxFrameCount = 0;
+uint16_t expectedRxSequence = 0;
+
+// Keep the final frame ACK repeatable after a complete message.
+// This fixes the Sprint 1.2.3 failure where a lost final ACK caused
+// every retry of the final frame to be rejected as out-of-order.
+bool completedAckValid = false;
+uint16_t completedSequence = 0;
 
 constexpr size_t BLE_SAFE_PAYLOAD = 20;
 constexpr size_t BLE_FRAME_HEADER = 3;
-constexpr size_t BLE_FRAME_DATA =
-    BLE_SAFE_PAYLOAD - BLE_FRAME_HEADER;
 constexpr uint8_t BLE_DATA_MARKER = 0xA5;
 constexpr uint8_t BLE_ACK_MARKER = 0xA6;
-constexpr uint32_t TX_CHUNK_DELAY_MS = 18;
-uint16_t expectedRxSequence = 0;
+constexpr uint32_t TX_CHUNK_INTERVAL_MS = 30;
+constexpr size_t COMMAND_QUEUE_DEPTH = 3;
+constexpr size_t RESPONSE_QUEUE_DEPTH = 8;
+constexpr size_t ACK_QUEUE_DEPTH = 16;
 
-void sendTransportAck(
-    uint16_t sequence
-) {
-    if (
-        !clientConnected ||
-        !txCharacteristic
-    ) {
-        return;
+QueueHandle_t commandQueue = nullptr;
+QueueHandle_t responseQueue = nullptr;
+QueueHandle_t ackQueue = nullptr;
+
+char* activeResponse = nullptr;
+size_t activeResponseLength = 0;
+size_t activeResponseOffset = 0;
+uint32_t lastTxAt = 0;
+
+bool rebootPending = false;
+uint32_t rebootRequestedAt = 0;
+
+BleTransport instance;
+
+void freeStringQueue(QueueHandle_t queue) {
+    if (!queue) return;
+
+    char* item = nullptr;
+    while (xQueueReceive(queue, &item, 0) == pdTRUE) {
+        free(item);
+        item = nullptr;
     }
-
-    uint8_t ack[3] = {
-        BLE_ACK_MARKER,
-        static_cast<uint8_t>(
-            sequence & 0xFF
-        ),
-        static_cast<uint8_t>(
-            (sequence >> 8) & 0xFF
-        )
-    };
-
-    txCharacteristic->setValue(
-        ack,
-        sizeof(ack)
-    );
-
-    txCharacteristic->notify();
 }
 
-void notifyJson(
-    JsonDocument& document
-) {
-    if (
-        !clientConnected ||
-        !txCharacteristic
-    ) {
-        return;
+void clearTransportState() {
+    receiveBuffer = "";
+    rxFrameCount = 0;
+    expectedRxSequence = 0;
+    completedAckValid = false;
+    completedSequence = 0;
+
+    freeStringQueue(commandQueue);
+    freeStringQueue(responseQueue);
+
+    if (ackQueue) {
+        xQueueReset(ackQueue);
     }
 
+    if (activeResponse) {
+        free(activeResponse);
+        activeResponse = nullptr;
+    }
+
+    activeResponseLength = 0;
+    activeResponseOffset = 0;
+    rebootPending = false;
+}
+
+bool enqueueOwnedString(
+    QueueHandle_t queue,
+    const String& value
+) {
+    if (!queue) return false;
+
+    char* copy = static_cast<char*>(
+        malloc(value.length() + 1)
+    );
+
+    if (!copy) {
+        Core::Logger::error(
+            "BLE queue allocation failed"
+        );
+        return false;
+    }
+
+    memcpy(
+        copy,
+        value.c_str(),
+        value.length() + 1
+    );
+
+    if (
+        xQueueSend(queue, &copy, 0) !=
+        pdTRUE
+    ) {
+        free(copy);
+        Core::Logger::error(
+            "BLE queue is full"
+        );
+        return false;
+    }
+
+    return true;
+}
+
+void enqueueTransportAck(
+    uint16_t sequence
+) {
+    if (!ackQueue) return;
+
+    if (
+        xQueueSend(
+            ackQueue,
+            &sequence,
+            0
+        ) != pdTRUE
+    ) {
+        Core::Logger::warning(
+            "BLE ACK queue full"
+        );
+    }
+}
+
+void enqueueJson(
+    JsonDocument& document
+) {
     String payload;
     serializeJson(document, payload);
     payload += "\n";
 
-    const size_t total = payload.length();
-    const size_t chunks =
-        (total + BLE_SAFE_PAYLOAD - 1) /
-        BLE_SAFE_PAYLOAD;
-
-    Core::Logger::info(
-        "BLE TX message: " +
-        String(total) +
-        " bytes, " +
-        String(chunks) +
-        " chunks"
-    );
-
-    for (
-        size_t offset = 0;
-        offset < total;
-        offset += BLE_SAFE_PAYLOAD
-    ) {
-        const size_t length = min(
-            BLE_SAFE_PAYLOAD,
-            total - offset
+    if (enqueueOwnedString(responseQueue, payload)) {
+        Core::Logger::info(
+            "BLE response queued: " +
+            String(payload.length()) +
+            " bytes"
         );
-
-        uint8_t chunk[BLE_SAFE_PAYLOAD];
-
-        memcpy(
-            chunk,
-            payload.c_str() + offset,
-            length
-        );
-
-        txCharacteristic->setValue(
-            chunk,
-            length
-        );
-
-        txCharacteristic->notify();
-        delay(TX_CHUNK_DELAY_MS);
     }
 }
 
@@ -132,62 +174,44 @@ void sendStatus(
         response["requestId"] = requestId;
     }
 
-    notifyJson(response);
+    enqueueJson(response);
 }
 
 void sendDeviceInfo() {
     JsonDocument response;
 
-    response["type"] =
-        "device_info";
-
+    response["type"] = "device_info";
     response["deviceName"] =
         "Display Studio E-Ink";
-
     response["deviceId"] =
         Device::deviceIdentity().id();
-
-    response["deviceFamily"] =
-        "eink";
-
+    response["deviceFamily"] = "eink";
     response["firmware"] =
         Version::FIRMWARE;
-
     response["release"] =
         Version::RELEASE;
-
     response["protocolVersion"] =
         Version::PROTOCOL;
-
     response["configured"] =
-        Project::projectManager()
-            .installed();
-
+        Project::projectManager().installed();
     response["projectModel"] =
         "display-studio/project-v1";
-
     response["timeReady"] =
-        Runtime::timeService()
-            .ready();
+        Runtime::timeService().ready();
 
     response["display"]["adapter"] =
         "gxepd2-213-z98c";
-
     response["display"]["width"] =
         Config::SCREEN_WIDTH;
-
     response["display"]["height"] =
         Config::SCREEN_HEIGHT;
-
     response["display"]["colorMode"] =
         "bwr";
-
-    response["display"]
-        ["partialRefresh"] = false;
+    response["display"]["partialRefresh"] =
+        false;
 
     JsonArray capabilities =
-        response["capabilities"]
-            .to<JsonArray>();
+        response["capabilities"].to<JsonArray>();
 
     capabilities.add("device-info");
     capabilities.add("persistent-project");
@@ -200,28 +224,25 @@ void sendDeviceInfo() {
     capabilities.add("reboot");
     capabilities.add("factory-reset");
     capabilities.add("ble-stop-and-wait-v1");
+    capabilities.add("ble-queued-runtime-v1");
 
-    notifyJson(response);
+    enqueueJson(response);
 }
 
 void sendStoredProject() {
     JsonDocument response;
     response["type"] = "stored_project";
 
-    if (
-        Project::projectManager()
-            .installed()
-    ) {
+    if (Project::projectManager().installed()) {
         response["found"] = true;
         response["project"].set(
-            Project::projectManager()
-                .document()
+            Project::projectManager().document()
         );
     } else {
         response["found"] = false;
     }
 
-    notifyJson(response);
+    enqueueJson(response);
 }
 
 void sendStoredConfigCompatibility() {
@@ -229,8 +250,7 @@ void sendStoredConfigCompatibility() {
     response["type"] = "stored_config";
 
     const JsonVariantConst scene =
-        Project::projectManager()
-            .activeScene();
+        Project::projectManager().activeScene();
 
     if (!scene.isNull()) {
         response["found"] = true;
@@ -241,30 +261,26 @@ void sendStoredConfigCompatibility() {
         response["found"] = false;
     }
 
-    notifyJson(response);
+    enqueueJson(response);
 }
 
-void handleLine(
-    const String& line
-) {
+void requestReboot() {
+    rebootPending = true;
+    rebootRequestedAt = millis();
+}
+
+void handleLine(const String& line) {
     JsonDocument request;
 
     const DeserializationError error =
-        deserializeJson(
-            request,
-            line
-        );
+        deserializeJson(request, line);
 
     if (error) {
         Core::Logger::error(
             "BLE JSON parse failed: " +
             String(error.c_str())
         );
-
-        sendStatus(
-            false,
-            "invalid_json"
-        );
+        sendStatus(false, "invalid_json");
         return;
     }
 
@@ -281,7 +297,7 @@ void handleLine(
     );
 
     Core::Logger::info(
-        "BLE command received: " + command +
+        "BLE command executing: " + command +
         (
             requestId.isEmpty()
                 ? ""
@@ -311,14 +327,11 @@ void handleLine(
 
     if (command == "set_time") {
         const bool ok =
-            Runtime::timeService()
-                .setFromBrowser(
-                    request["epochMs"] |
-                        0LL,
-                    request
-                        ["timezoneOffsetMinutes"] |
-                        420
-                );
+            Runtime::timeService().setFromBrowser(
+                request["epochMs"] | 0LL,
+                request["timezoneOffsetMinutes"] |
+                    420
+            );
 
         sendStatus(
             ok,
@@ -327,16 +340,14 @@ void handleLine(
                 : "time_sync_failed",
             requestId
         );
-
         return;
     }
 
     if (command == "set_project") {
         const bool installed =
-            Project::projectManager()
-                .install(
-                    request["project"]
-                );
+            Project::projectManager().install(
+                request["project"]
+            );
 
         sendStatus(
             installed,
@@ -345,16 +356,14 @@ void handleLine(
                 : "project_install_failed",
             requestId
         );
-
         return;
     }
 
     if (command == "set_config") {
         const bool installed =
-            Project::projectManager()
-                .installLegacy(
-                    request["config"]
-                );
+            Project::projectManager().installLegacy(
+                request["config"]
+            );
 
         sendStatus(
             installed,
@@ -363,7 +372,6 @@ void handleLine(
                 : "config_save_failed",
             requestId
         );
-
         return;
     }
 
@@ -375,8 +383,9 @@ void handleLine(
         );
 
         const bool activated =
-            Project::projectManager()
-                .activateScene(sceneId);
+            Project::projectManager().activateScene(
+                sceneId
+            );
 
         sendStatus(
             activated,
@@ -385,14 +394,12 @@ void handleLine(
                 : "scene_activation_failed",
             requestId
         );
-
         return;
     }
 
     if (command == "apply") {
         const bool rendered =
-            Runtime::sceneRuntime()
-                .renderNow();
+            Runtime::sceneRuntime().renderNow();
 
         sendStatus(
             rendered,
@@ -401,29 +408,23 @@ void handleLine(
                 : "scene_render_failed",
             requestId
         );
-
         return;
     }
 
     if (command == "reboot") {
         sendStatus(true, "rebooting", requestId);
-        delay(300);
-        ESP.restart();
+        requestReboot();
         return;
     }
 
     if (command == "factory_reset") {
-        Project::projectManager()
-            .clear();
-
+        Project::projectManager().clear();
         sendStatus(
             true,
             "factory_reset",
             requestId
         );
-
-        delay(300);
-        ESP.restart();
+        requestReboot();
         return;
     }
 
@@ -434,15 +435,187 @@ void handleLine(
     );
 }
 
+void pumpAck() {
+    if (
+        !clientConnected ||
+        !txCharacteristic ||
+        !ackQueue
+    ) {
+        return;
+    }
+
+    uint16_t sequence = 0;
+
+    if (
+        xQueueReceive(
+            ackQueue,
+            &sequence,
+            0
+        ) != pdTRUE
+    ) {
+        return;
+    }
+
+    uint8_t ack[3] = {
+        BLE_ACK_MARKER,
+        static_cast<uint8_t>(
+            sequence & 0xFF
+        ),
+        static_cast<uint8_t>(
+            (sequence >> 8) & 0xFF
+        )
+    };
+
+    txCharacteristic->setValue(
+        ack,
+        sizeof(ack)
+    );
+    txCharacteristic->notify();
+    lastTxAt = millis();
+}
+
+bool ackPending() {
+    return ackQueue &&
+        uxQueueMessagesWaiting(ackQueue) > 0;
+}
+
+void startNextResponse() {
+    if (
+        activeResponse ||
+        !responseQueue
+    ) {
+        return;
+    }
+
+    char* next = nullptr;
+
+    if (
+        xQueueReceive(
+            responseQueue,
+            &next,
+            0
+        ) != pdTRUE
+    ) {
+        return;
+    }
+
+    activeResponse = next;
+    activeResponseLength =
+        strlen(activeResponse);
+    activeResponseOffset = 0;
+
+    Core::Logger::info(
+        "BLE TX started: " +
+        String(activeResponseLength) +
+        " bytes"
+    );
+}
+
+void pumpResponse() {
+    if (
+        !clientConnected ||
+        !txCharacteristic ||
+        ackPending()
+    ) {
+        return;
+    }
+
+    startNextResponse();
+
+    if (!activeResponse) {
+        return;
+    }
+
+    if (
+        millis() - lastTxAt <
+        TX_CHUNK_INTERVAL_MS
+    ) {
+        return;
+    }
+
+    const size_t length = min(
+        BLE_SAFE_PAYLOAD,
+        activeResponseLength -
+            activeResponseOffset
+    );
+
+    uint8_t chunk[BLE_SAFE_PAYLOAD];
+
+    memcpy(
+        chunk,
+        activeResponse +
+            activeResponseOffset,
+        length
+    );
+
+    txCharacteristic->setValue(
+        chunk,
+        length
+    );
+    txCharacteristic->notify();
+
+    activeResponseOffset += length;
+    lastTxAt = millis();
+
+    if (
+        activeResponseOffset >=
+        activeResponseLength
+    ) {
+        Core::Logger::info(
+            "BLE TX completed"
+        );
+
+        free(activeResponse);
+        activeResponse = nullptr;
+        activeResponseLength = 0;
+        activeResponseOffset = 0;
+    }
+}
+
+void executeNextCommand() {
+    if (
+        !commandQueue ||
+        ackPending()
+    ) {
+        return;
+    }
+
+    char* command = nullptr;
+
+    if (
+        xQueueReceive(
+            commandQueue,
+            &command,
+            0
+        ) != pdTRUE
+    ) {
+        return;
+    }
+
+    String line(command);
+    free(command);
+
+    handleLine(line);
+}
+
+bool transportIdle() {
+    return
+        !activeResponse &&
+        (!responseQueue ||
+            uxQueueMessagesWaiting(
+                responseQueue
+            ) == 0) &&
+        (!ackQueue ||
+            uxQueueMessagesWaiting(
+                ackQueue
+            ) == 0);
+}
+
 class ServerCallbacks final
     : public BLEServerCallbacks {
-    void onConnect(
-        BLEServer*
-    ) override {
+    void onConnect(BLEServer*) override {
         clientConnected = true;
-        receiveBuffer = "";
-        rxChunkCount = 0;
-        expectedRxSequence = 0;
+        clearTransportState();
 
         Core::Logger::info(
             "BLE client connected"
@@ -453,17 +626,14 @@ class ServerCallbacks final
         BLEServer* server
     ) override {
         clientConnected = false;
-        receiveBuffer = "";
-        rxChunkCount = 0;
-        expectedRxSequence = 0;
+        clearTransportState();
 
         Core::Logger::info(
             "BLE client disconnected"
         );
 
         delay(100);
-        server->getAdvertising()
-            ->start();
+        server->getAdvertising()->start();
 
         Core::Logger::info(
             "BLE advertising restarted"
@@ -474,8 +644,7 @@ class ServerCallbacks final
 class RxCallbacks final
     : public BLECharacteristicCallbacks {
     void onWrite(
-        BLECharacteristic*
-            characteristic
+        BLECharacteristic* characteristic
     ) override {
         const std::string value =
             characteristic->getValue();
@@ -506,12 +675,28 @@ class RxCallbacks final
                 << 8
             );
 
+        // A retry of the final frame can arrive after the message
+        // state has reset to sequence zero. ACK it again without
+        // appending it a second time.
+        if (
+            completedAckValid &&
+            expectedRxSequence == 0 &&
+            sequence == completedSequence
+        ) {
+            Core::Logger::warning(
+                "BLE RX repeated final frame #" +
+                String(sequence)
+            );
+            enqueueTransportAck(sequence);
+            return;
+        }
+
         if (sequence < expectedRxSequence) {
             Core::Logger::warning(
                 "BLE RX duplicate frame #" +
                 String(sequence)
             );
-            sendTransportAck(sequence);
+            enqueueTransportAck(sequence);
             return;
         }
 
@@ -525,6 +710,13 @@ class RxCallbacks final
             return;
         }
 
+        if (
+            sequence == 0 &&
+            expectedRxSequence == 0
+        ) {
+            completedAckValid = false;
+        }
+
         const size_t dataLength =
             value.size() - BLE_FRAME_HEADER;
 
@@ -535,7 +727,7 @@ class RxCallbacks final
             dataLength
         );
 
-        rxChunkCount++;
+        rxFrameCount++;
 
         Core::Logger::info(
             "BLE RX frame #" +
@@ -546,17 +738,13 @@ class RxCallbacks final
             String(receiveBuffer.length())
         );
 
-        // ACK immediately. Command execution may take several
-        // seconds, especially when the e-paper is refreshed.
-        sendTransportAck(sequence);
+        enqueueTransportAck(sequence);
         expectedRxSequence++;
 
-        while (
-            receiveBuffer.indexOf('\n') >= 0
-        ) {
-            const int newline =
-                receiveBuffer.indexOf('\n');
+        const int newline =
+            receiveBuffer.indexOf('\n');
 
+        if (newline >= 0) {
             String line =
                 receiveBuffer.substring(
                     0,
@@ -571,19 +759,30 @@ class RxCallbacks final
             line.trim();
 
             Core::Logger::info(
-                "BLE RX message complete: " +
+                "BLE command queued: " +
                 String(line.length()) +
                 " bytes in " +
-                String(rxChunkCount) +
+                String(rxFrameCount) +
                 " frames"
             );
 
-            rxChunkCount = 0;
-            expectedRxSequence = 0;
-
             if (!line.isEmpty()) {
-                handleLine(line);
+                if (
+                    !enqueueOwnedString(
+                        commandQueue,
+                        line
+                    )
+                ) {
+                    Core::Logger::error(
+                        "BLE command queue full"
+                    );
+                }
             }
+
+            completedSequence = sequence;
+            completedAckValid = true;
+            rxFrameCount = 0;
+            expectedRxSequence = 0;
         }
 
         if (
@@ -595,8 +794,9 @@ class RxCallbacks final
             );
 
             receiveBuffer = "";
-            rxChunkCount = 0;
+            rxFrameCount = 0;
             expectedRxSequence = 0;
+            completedAckValid = false;
 
             sendStatus(
                 false,
@@ -612,6 +812,30 @@ BleTransport& bleTransport() {
 }
 
 void BleTransport::begin() {
+    commandQueue = xQueueCreate(
+        COMMAND_QUEUE_DEPTH,
+        sizeof(char*)
+    );
+    responseQueue = xQueueCreate(
+        RESPONSE_QUEUE_DEPTH,
+        sizeof(char*)
+    );
+    ackQueue = xQueueCreate(
+        ACK_QUEUE_DEPTH,
+        sizeof(uint16_t)
+    );
+
+    if (
+        !commandQueue ||
+        !responseQueue ||
+        !ackQueue
+    ) {
+        Core::Logger::error(
+            "BLE queue initialization failed"
+        );
+        return;
+    }
+
     String suffix =
         Device::deviceIdentity().id();
 
@@ -627,28 +851,23 @@ void BleTransport::begin() {
     BLEDevice::init(
         advertisedName.c_str()
     );
-
     BLEDevice::setMTU(185);
 
-    BLEServer* server =
-        BLEDevice::createServer();
-
-    server->setCallbacks(
+    bleServer = BLEDevice::createServer();
+    bleServer->setCallbacks(
         new ServerCallbacks()
     );
 
     BLEService* service =
-        server->createService(
+        bleServer->createService(
             Config::BLE_SERVICE_UUID
         );
 
     BLECharacteristic* rx =
         service->createCharacteristic(
             Config::BLE_RX_UUID,
-            BLECharacteristic::
-                PROPERTY_WRITE |
-            BLECharacteristic::
-                PROPERTY_WRITE_NR
+            BLECharacteristic::PROPERTY_WRITE |
+            BLECharacteristic::PROPERTY_WRITE_NR
         );
 
     rx->setCallbacks(
@@ -658,10 +877,8 @@ void BleTransport::begin() {
     txCharacteristic =
         service->createCharacteristic(
             Config::BLE_TX_UUID,
-            BLECharacteristic::
-                PROPERTY_READ |
-            BLECharacteristic::
-                PROPERTY_NOTIFY
+            BLECharacteristic::PROPERTY_READ |
+            BLECharacteristic::PROPERTY_NOTIFY
         );
 
     txCharacteristic->addDescriptor(
@@ -676,7 +893,6 @@ void BleTransport::begin() {
     advertising->addServiceUUID(
         Config::BLE_SERVICE_UUID
     );
-
     advertising->setScanResponse(true);
     advertising->setMinPreferred(0x06);
     advertising->setMaxPreferred(0x12);
@@ -688,14 +904,34 @@ void BleTransport::begin() {
     );
 
     Core::Logger::info(
-        "BLE service ready: " +
-        String(
-            Config::BLE_SERVICE_UUID
-        )
+        "BLE queued transport ready: " +
+        String(Config::BLE_SERVICE_UUID)
     );
 }
 
 void BleTransport::loop() {
+    if (!clientConnected) {
+        return;
+    }
+
+    // One notification operation per loop iteration. ACKs always
+    // take priority over JSON response chunks.
+    if (ackPending()) {
+        pumpAck();
+        return;
+    }
+
+    executeNextCommand();
+    pumpResponse();
+
+    if (
+        rebootPending &&
+        transportIdle() &&
+        millis() - rebootRequestedAt >
+            500
+    ) {
+        ESP.restart();
+    }
 }
 
 bool BleTransport::connected() const {
