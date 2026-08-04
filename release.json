@@ -1,7 +1,7 @@
 {
   "product": "Display Studio",
-  "release": "Display Studio 2.1 Runtime Queue",
-  "version": "2.1.0-runtime-queue.1",
+  "release": "Display Studio 2.2 Async Display Engine",
+  "version": "2.2.0-async-display.1",
   "protocolVersion": 3,
-  "milestone": "Dedicated Renderer Worker"
+  "milestone": "Serialized Display Engine"
 }

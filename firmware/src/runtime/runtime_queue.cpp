@@ -4,8 +4,8 @@
 #include <freertos/task.h>
 
 #include "display_studio/core/logger.h"
+#include "display_studio/display/display_engine.h"
 #include "display_studio/runtime/runtime_queue.h"
-#include "display_studio/runtime/scene_runtime.h"
 
 namespace DisplayStudio::Runtime {
 namespace {
@@ -168,9 +168,10 @@ void RuntimeQueue::workerLoop() {
                 workerState =
                     RuntimeWorkerState::Rendering;
                 Core::Logger::info(
-                    "Renderer Worker started"
+                    "Renderer Worker delegated to Display Engine"
                 );
-                ok = sceneRuntime().renderImmediate();
+                ok = Display::displayEngine()
+                    .renderActiveScene();
                 break;
         }
 
@@ -192,8 +193,6 @@ void RuntimeQueue::workerLoop() {
             );
         }
 
-        // A failed render is an operation failure, not a permanent
-        // runtime lock. The worker must accept later operations.
         workerState = RuntimeWorkerState::Idle;
     }
 }
