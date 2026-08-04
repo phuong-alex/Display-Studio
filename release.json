@@ -1,0 +1,7 @@
+{
+  "product": "Display Studio",
+  "release": "Sprint 1.2.3",
+  "version": "1.2.3-sprint.1.2.3",
+  "protocolVersion": 3,
+  "milestone": "Stop-and-Wait BLE Transport"
+}

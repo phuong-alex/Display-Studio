@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  >
+  <meta
+    name="theme-color"
+    content="#101828"
+  >
+  <title>Display Studio Alpha 1</title>
+  <link rel="stylesheet" href="./style.css?v=1">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Display Studio</h1>
+      <p>Design · Connect · Deploy · Run independently</p>
+    </div>
+
+    <div class="connection-box">
+      <span id="connection-state" class="badge offline">
+        Chưa kết nối
+      </span>
+      <button id="connect-button" class="button primary">
+        Kết nối Bluetooth
+      </button>
+      <button id="disconnect-button" class="button ghost" disabled>
+        Ngắt kết nối
+      </button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar panel">
+      <h2>Thiết bị</h2>
+
+      <dl class="device-info">
+        <dt>Tên</dt>
+        <dd id="device-name">—</dd>
+
+        <dt>Loại</dt>
+        <dd id="device-family">—</dd>
+
+        <dt>Màn hình</dt>
+        <dd id="display-info">—</dd>
+
+        <dt>Firmware</dt>
+        <dd id="firmware-version">—</dd>
+
+        <dt>Capabilities</dt>
+        <dd id="capabilities">—</dd>
+      </dl>
+
+      <hr>
+
+      <h2>Scene</h2>
+
+      <label>
+        Preset
+        <select id="preset">
+          <option value="clock-calendar">
+            Clock + Calendar
+          </option>
+          <option value="clock">
+            Clock
+          </option>
+          <option value="calendar">
+            Calendar
+          </option>
+        </select>
+      </label>
+
+      <label>
+        Timezone
+        <select id="timezone">
+          <option value="Asia/Ho_Chi_Minh">
+            Asia/Ho_Chi_Minh
+          </option>
+          <option value="UTC">UTC</option>
+        </select>
+      </label>
+
+      <label>
+        Refresh Clock
+        <select id="refresh-minutes">
+          <option value="5">5 phút · khuyến nghị</option>
+          <option value="15">15 phút</option>
+          <option value="60">Mỗi giờ</option>
+          <option value="1">1 phút · nháy nhiều</option>
+        </select>
+      </label>
+
+      <label>
+        Màu giờ
+        <select id="accent">
+          <option value="red">Đỏ</option>
+          <option value="black">Đen</option>
+        </select>
+      </label>
+
+      <label>
+        Âm lịch / ghi chú
+        <input
+          id="lunar-text"
+          value=""
+          maxlength="24"
+          placeholder="Ví dụ: 21/6 AL"
+        >
+      </label>
+
+      <hr>
+
+      <h2>Wi-Fi/NTP tùy chọn</h2>
+
+      <label>
+        Wi-Fi SSID
+        <input id="wifi-ssid" autocomplete="off">
+      </label>
+
+      <label>
+        Wi-Fi password
+        <input
+          id="wifi-password"
+          type="password"
+          autocomplete="new-password"
+        >
+      </label>
+
+      <p class="hint">
+        Có Wi-Fi: thiết bị tự đồng bộ giờ sau khi mất điện.
+        Không có Wi-Fi: web sẽ gửi giờ hiện tại lúc deploy.
+      </p>
+    </aside>
+
+    <section class="workspace">
+      <div class="panel preview-panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Preview</h2>
+            <p>250 × 122 · E-ink ba màu</p>
+          </div>
+          <button id="sync-time-button" class="button ghost">
+            Ping thiết bị
+          </button>
+        </div>
+
+        <div id="preview" class="display-preview">
+          <div id="preview-time" class="preview-time">16:58</div>
+          <div id="preview-weekday" class="preview-weekday">
+            Tuesday
+          </div>
+          <div id="preview-date" class="preview-date">
+            04/08/2026
+          </div>
+          <div id="preview-lunar" class="preview-lunar"></div>
+        </div>
+      </div>
+
+      <div class="panel actions-panel">
+        <h2>Deploy</h2>
+        <p>
+          Project và Scene đang hoạt động được lưu trong ESP32. Sau khi deploy,
+          có thể đóng web và ngắt Bluetooth.
+        </p>
+
+        <div class="button-row">
+          <button id="deploy-button" class="button primary" disabled>
+            Deploy Project · Sprint 1.2.3
+          </button>
+          <button id="save-local-button" class="button ghost">
+            Lưu Project trong trình duyệt
+          </button>
+          <button id="load-local-button" class="button ghost">
+            Nạp Project đã lưu
+          </button>
+        </div>
+
+        <div class="button-row danger-row">
+          <button id="reboot-button" class="button ghost" disabled>
+            Khởi động lại ESP32
+          </button>
+          <button id="factory-reset-button" class="button danger" disabled>
+            Factory reset
+          </button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-heading">
+          <h2>BLE Log</h2>
+          <button id="clear-log-button" class="button ghost">
+            Xóa log
+          </button>
+        </div>
+        <pre id="log">Display Studio Sprint 1.2.3 ready.</pre>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="./app.js?v=1"></script>
+</body>
+</html>

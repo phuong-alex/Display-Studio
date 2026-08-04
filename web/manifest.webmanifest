@@ -1,0 +1,8 @@
+{
+  "name": "Display Studio",
+  "short_name": "Display Studio",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f2f4f7",
+  "theme_color": "#101828"
+}
