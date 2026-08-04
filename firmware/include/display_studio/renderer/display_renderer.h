@@ -6,6 +6,8 @@ namespace DisplayStudio::Renderer {
 class DisplayRenderer {
 public:
     bool begin();
+    bool recoverController();
+
     void showBootScreen();
     void showWaitingForTime();
 
@@ -20,6 +22,11 @@ public:
     );
 
 private:
+    bool initializeController(
+        const String& reason,
+        bool hardwareReset
+    );
+
     void centered(
         const String& text,
         int16_t baseline

@@ -4,8 +4,8 @@ namespace DisplayStudio::Version {
 inline constexpr const char* PRODUCT =
     "Display Studio Device";
 inline constexpr const char* RELEASE =
-    "Display Studio 2.2 Async Display Engine";
+    "Display Studio 3.0 Recoverable Driver";
 inline constexpr const char* FIRMWARE =
-    "2.2.0-async-display.1";
+    "3.0.1-project-blob.1";
 inline constexpr int PROTOCOL = 3;
 }

@@ -1,7 +1,7 @@
 {
   "product": "Display Studio",
-  "release": "Display Studio 2.2 Async Display Engine",
-  "version": "2.2.0-async-display.1",
+  "release": "Display Studio 3.0 Recoverable Driver",
+  "version": "3.0.1-project-blob.1",
   "protocolVersion": 3,
-  "milestone": "Serialized Display Engine"
+  "milestone": "Recoverable Driver and Scalable Project Blob Storage"
 }

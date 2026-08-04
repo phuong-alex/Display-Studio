@@ -22,9 +22,7 @@ void ProjectManager::begin() {
 bool ProjectManager::load() {
     JsonDocument stored;
 
-    if (
-        !Storage::projectStorage().load(stored)
-    ) {
+    if (!Storage::projectStorage().load(stored)) {
         return false;
     }
 
@@ -35,12 +33,7 @@ bool ProjectManager::load() {
 
         JsonDocument migrated;
 
-        if (
-            !ProjectModel::migrateLegacy(
-                stored,
-                migrated
-            )
-        ) {
+        if (!ProjectModel::migrateLegacy(stored, migrated)) {
             Core::Logger::error(
                 "Legacy migration failed"
             );
@@ -54,18 +47,12 @@ bool ProjectManager::load() {
         Core::Logger::info(
             "Legacy config migrated"
         );
-
         return true;
     }
 
     String error;
 
-    if (
-        !ProjectModel::validate(
-            stored,
-            error
-        )
-    ) {
+    if (!ProjectModel::validate(stored, error)) {
         Core::Logger::error(
             "Stored Project invalid: " + error
         );
@@ -73,9 +60,15 @@ bool ProjectManager::load() {
     }
 
     project_.clear();
-    project_.set(
-        stored.as<JsonVariantConst>()
-    );
+    project_.set(stored.as<JsonVariantConst>());
+
+    if (project_.overflowed()) {
+        Core::Logger::error(
+            "Stored Project copy overflowed"
+        );
+        project_.clear();
+        return false;
+    }
 
     installed_ = true;
 
@@ -93,9 +86,7 @@ bool ProjectManager::load() {
 
     if (
         scene.isNull() ||
-        !Runtime::sceneRuntime().configure(
-            scene["config"]
-        )
+        !Runtime::sceneRuntime().configure(scene["config"])
     ) {
         Core::Logger::error(
             "Active Scene configuration failed"
@@ -110,7 +101,9 @@ bool ProjectManager::load() {
             static_cast<const char*>(
                 project_["name"] | ""
             )
-        )
+        ) +
+        ", heap=" +
+        String(ESP.getFreeHeap())
     );
 
     return true;
@@ -120,17 +113,15 @@ bool ProjectManager::install(
     JsonVariantConst project
 ) {
     Core::Logger::info(
-        "Receiving Project..."
+        "Receiving Project... bytes=" +
+        String(measureJson(project)) +
+        ", heap=" +
+        String(ESP.getFreeHeap())
     );
 
     String error;
 
-    if (
-        !ProjectModel::validate(
-            project,
-            error
-        )
-    ) {
+    if (!ProjectModel::validate(project, error)) {
         Core::Logger::error(
             "Project validation failed: " + error
         );
@@ -145,15 +136,10 @@ bool ProjectManager::install(
     const uint32_t checksum =
         ProjectChecksum::calculate(project);
 
+    Core::Logger::info("Project validated");
     Core::Logger::info(
-        "Project validated"
+        "Scene count: " + String(sceneCount)
     );
-
-    Core::Logger::info(
-        "Scene count: " +
-        String(sceneCount)
-    );
-
     Core::Logger::info(
         "Project checksum: " +
         ProjectChecksum::hex(checksum)
@@ -173,26 +159,16 @@ bool ProjectManager::install(
         "Configuring active Scene..."
     );
 
-    if (
-        !Runtime::sceneRuntime().configure(
-            scene["config"]
-        )
-    ) {
+    if (!Runtime::sceneRuntime().configure(scene["config"])) {
         Core::Logger::error(
             "Active Scene configuration failed"
         );
         return false;
     }
 
-    Core::Logger::info(
-        "Saving Project..."
-    );
+    Core::Logger::info("Saving Project...");
 
-    if (
-        !Storage::projectStorage().save(
-            project
-        )
-    ) {
+    if (!Storage::projectStorage().save(project)) {
         Core::Logger::error(
             "Project save failed"
         );
@@ -203,24 +179,27 @@ bool ProjectManager::install(
         "Verifying stored Project..."
     );
 
-    if (
-        !Storage::projectStorage().verify(
-            project
-        )
-    ) {
+    if (!Storage::projectStorage().verify(project)) {
         Core::Logger::error(
             "Project storage verification failed"
         );
         return false;
     }
 
-    JsonDocument installedProject;
-    installedProject.set(project);
-
+    // Copy directly into the persistent document. The previous implementation
+    // created an additional full-size JsonDocument before this copy, doubling
+    // peak heap for larger multi-Scene Projects.
     project_.clear();
-    project_.set(
-        installedProject.as<JsonVariantConst>()
-    );
+    project_.set(project);
+
+    if (project_.overflowed()) {
+        Core::Logger::error(
+            "Installed Project copy overflowed"
+        );
+        project_.clear();
+        installed_ = false;
+        return false;
+    }
 
     installed_ = true;
 
@@ -230,7 +209,11 @@ bool ProjectManager::install(
             static_cast<const char*>(
                 project_["name"] | ""
             )
-        )
+        ) +
+        ", bytes=" +
+        String(measureJson(project_)) +
+        ", heap=" +
+        String(ESP.getFreeHeap())
     );
 
     return true;
@@ -241,12 +224,7 @@ bool ProjectManager::installLegacy(
 ) {
     JsonDocument migrated;
 
-    if (
-        !ProjectModel::migrateLegacy(
-            legacy,
-            migrated
-        )
-    ) {
+    if (!ProjectModel::migrateLegacy(legacy, migrated)) {
         return false;
     }
 
@@ -261,16 +239,16 @@ bool ProjectManager::activateScene(
     }
 
     JsonDocument candidate;
-    candidate.set(
-        project_.as<JsonVariantConst>()
-    );
+    candidate.set(project_.as<JsonVariantConst>());
 
-    if (
-        !ProjectModel::setActiveScene(
-            candidate,
-            sceneId
-        )
-    ) {
+    if (candidate.overflowed()) {
+        Core::Logger::error(
+            "Scene activation copy overflowed"
+        );
+        return false;
+    }
+
+    if (!ProjectModel::setActiveScene(candidate, sceneId)) {
         return false;
     }
 
@@ -279,29 +257,26 @@ bool ProjectManager::activateScene(
 
     if (
         scene.isNull() ||
-        !Runtime::sceneRuntime().configure(
-            scene["config"]
-        )
+        !Runtime::sceneRuntime().configure(scene["config"])
     ) {
         return false;
     }
 
-    if (
-        !Storage::projectStorage().save(
-            candidate
-        )
-    ) {
+    if (!Storage::projectStorage().save(candidate)) {
         return false;
     }
 
     project_.clear();
-    project_.set(
-        candidate.as<JsonVariantConst>()
-    );
+    project_.set(candidate.as<JsonVariantConst>());
+
+    if (project_.overflowed()) {
+        project_.clear();
+        installed_ = false;
+        return false;
+    }
 
     Core::Logger::info(
-        "Active Scene changed: " +
-        sceneId
+        "Active Scene changed: " + sceneId
     );
 
     return true;
