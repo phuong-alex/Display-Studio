@@ -1,5 +1,23 @@
 # Changelog
 
+## Sprint 1.5
+
+- Added a Project name editor and Scene Manager to the web Studio.
+- Added Scene creation, rename, duplication and deletion.
+- Added enabled/disabled Scene state management.
+- Added active Scene selection and validation.
+- Added multi-Scene Project persistence in browser storage.
+- Added loading of multi-Scene Projects from ESP32.
+- Deploy now sends all Scenes and renders the selected active Scene.
+- Preserved Project schema V1 and BLE protocol 3.
+
+## Sprint 1.4
+
+- Added `Scene::SceneModel` as a first-class firmware model.
+- Added Scene validation and duplicate ID detection.
+- Prevented disabled Scenes from becoming active.
+- Preserved compatibility with existing single-Scene Projects.
+
 ## Sprint 1.3
 
 - Moved command execution out of the BLE write callback.
