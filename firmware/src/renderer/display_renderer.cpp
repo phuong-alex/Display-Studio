@@ -80,15 +80,26 @@ void DisplayRenderer::header(
     );
 }
 
-bool DisplayRenderer::begin() {
-    pinMode(Pins::EINK_BUSY, INPUT);
-
-    displaySpi.begin(
-        Pins::EINK_SCK,
-        Pins::EINK_MISO,
-        Pins::EINK_MOSI,
-        Pins::EINK_CS
+bool DisplayRenderer::initializeController(
+    const String& reason,
+    bool hardwareReset
+) {
+    Core::Logger::info(
+        "E-ink controller init: " + reason +
+        ", reset=" + String(hardwareReset ? 1 : 0) +
+        ", BUSY=" + String(digitalRead(Pins::EINK_BUSY))
     );
+
+    if (hardwareReset) {
+        pinMode(Pins::EINK_CS, OUTPUT);
+        digitalWrite(Pins::EINK_CS, HIGH);
+
+        pinMode(Pins::EINK_RST, OUTPUT);
+        digitalWrite(Pins::EINK_RST, LOW);
+        delay(30);
+        digitalWrite(Pins::EINK_RST, HIGH);
+        delay(250);
+    }
 
     eink.epd2.selectSPI(
         displaySpi,
@@ -109,17 +120,56 @@ bool DisplayRenderer::begin() {
     eink.setRotation(
         Config::DISPLAY_ROTATION
     );
-
     eink.setFullWindow();
 
+    const bool ready =
+        digitalRead(Pins::EINK_BUSY) == LOW;
+
     Core::Logger::info(
-        "E-ink init complete; BUSY=" +
-        String(
-            digitalRead(Pins::EINK_BUSY)
-        )
+        String("E-ink controller ") +
+        (ready ? "ready" : "not idle") +
+        "; BUSY=" +
+        String(digitalRead(Pins::EINK_BUSY))
     );
 
-    return true;
+    return ready;
+}
+
+bool DisplayRenderer::begin() {
+    pinMode(Pins::EINK_BUSY, INPUT);
+
+    displaySpi.begin(
+        Pins::EINK_SCK,
+        Pins::EINK_MISO,
+        Pins::EINK_MOSI,
+        Pins::EINK_CS
+    );
+
+    return initializeController(
+        "startup",
+        true
+    );
+}
+
+bool DisplayRenderer::recoverController() {
+    Core::Logger::warning(
+        "E-ink recovery requested"
+    );
+
+    delay(250);
+
+    const bool recovered = initializeController(
+        "automatic recovery",
+        true
+    );
+
+    Core::Logger::info(
+        recovered
+            ? "E-ink recovery completed"
+            : "E-ink recovery failed"
+    );
+
+    return recovered;
 }
 
 void DisplayRenderer::showBootScreen() {
@@ -139,8 +189,7 @@ void DisplayRenderer::showBootScreen() {
     } while (eink.nextPage());
 }
 
-void DisplayRenderer::
-showWaitingForTime() {
+void DisplayRenderer::showWaitingForTime() {
     eink.setFullWindow();
     eink.firstPage();
 
@@ -229,14 +278,11 @@ bool DisplayRenderer::showScene(
     } while (eink.nextPage());
 
     const bool ok =
-        digitalRead(Pins::EINK_BUSY) ==
-        LOW;
+        digitalRead(Pins::EINK_BUSY) == LOW;
 
     Core::Logger::info(
         "Display render complete; BUSY=" +
-        String(
-            digitalRead(Pins::EINK_BUSY)
-        )
+        String(digitalRead(Pins::EINK_BUSY))
     );
 
     return ok;
