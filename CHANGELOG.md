@@ -1,22 +1,20 @@
 # Changelog
 
+## Sprint 1.5.1
+
+- Paused automatic Scene refresh while a BLE Studio session is connected.
+- Preserved explicit `apply` rendering after Project deploy.
+- Prevented endless 30-second e-ink retries after a BUSY failure.
+- Marked each automatic refresh bucket before rendering, so a failed refresh is deferred until the next configured interval.
+- Fixed BLE frame 0 ACK starvation caused by repeated blocking display refreshes.
+
 ## Sprint 1.5
 
-- Added a Project name editor and Scene Manager to the web Studio.
-- Added Scene creation, rename, duplication and deletion.
-- Added enabled/disabled Scene state management.
-- Added active Scene selection and validation.
-- Added multi-Scene Project persistence in browser storage.
-- Added loading of multi-Scene Projects from ESP32.
-- Deploy now sends all Scenes and renders the selected active Scene.
+- Added a multi-Scene Project manager to the web Studio.
+- Added create, rename, duplicate, delete, enable and active Scene controls.
+- Added Project name editing and complete multi-Scene browser persistence.
+- Added loading of complete multi-Scene Projects from ESP32.
 - Preserved Project schema V1 and BLE protocol 3.
-
-## Sprint 1.4
-
-- Added `Scene::SceneModel` as a first-class firmware model.
-- Added Scene validation and duplicate ID detection.
-- Prevented disabled Scenes from becoming active.
-- Preserved compatibility with existing single-Scene Projects.
 
 ## Sprint 1.3
 
