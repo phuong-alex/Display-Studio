@@ -20,6 +20,7 @@ public:
     bool begin(size_t expectedSize, uint32_t expectedCrc32);
     bool append(size_t offset, const String& base64Data);
     std::unique_ptr<JsonDocument> commit();
+    bool commit(JsonDocument& project); // temporary Protocol-4 compatibility
     void abort();
 
     bool active() const;
