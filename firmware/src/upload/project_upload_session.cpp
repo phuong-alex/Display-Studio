@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <esp_heap_caps.h>
 #include <mbedtls/base64.h>
 
 #include "display_studio/config.h"
@@ -9,6 +10,12 @@
 namespace DisplayStudio::Upload {
 namespace {
 ProjectUploadSession instance;
+
+String heapSnapshot() {
+    return "free=" + String(ESP.getFreeHeap()) +
+        ", largest=" + String(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)) +
+        ", min=" + String(ESP.getMinFreeHeap());
+}
 }
 
 ProjectUploadSession& projectUploadSession() {
@@ -35,6 +42,8 @@ bool ProjectUploadSession::begin(
     uint32_t expectedCrc32
 ) {
     abort();
+    lastCommitError_ = UploadCommitError::None;
+
     if (expectedSize == 0 || expectedSize > Config::MAX_PROJECT_BYTES) {
         Core::Logger::error("[UPLOAD] Invalid project size: " + String(expectedSize));
         return false;
@@ -42,7 +51,7 @@ bool ProjectUploadSession::begin(
 
     buffer_ = static_cast<uint8_t*>(malloc(expectedSize + 1));
     if (!buffer_) {
-        Core::Logger::error("[UPLOAD] Buffer allocation failed: " + String(expectedSize));
+        Core::Logger::error("[UPLOAD] Buffer allocation failed: " + String(expectedSize) + ", " + heapSnapshot());
         return false;
     }
 
@@ -50,7 +59,7 @@ bool ProjectUploadSession::begin(
     expectedCrc32_ = expectedCrc32;
     receivedSize_ = 0;
     active_ = true;
-    Core::Logger::info("[UPLOAD] Session started: bytes=" + String(expectedSize_) + ", heap=" + String(ESP.getFreeHeap()));
+    Core::Logger::info("[UPLOAD] Session started: bytes=" + String(expectedSize_) + ", crc=" + String(expectedCrc32_, HEX) + ", " + heapSnapshot());
     return true;
 }
 
@@ -70,7 +79,7 @@ bool ProjectUploadSession::append(
     const size_t decodedCapacity = (base64Data.length() * 3) / 4 + 4;
     uint8_t* decoded = static_cast<uint8_t*>(malloc(decodedCapacity));
     if (!decoded) {
-        Core::Logger::error("[UPLOAD] Chunk allocation failed");
+        Core::Logger::error("[UPLOAD] Chunk allocation failed: need=" + String(decodedCapacity) + ", " + heapSnapshot());
         return false;
     }
 
@@ -85,7 +94,7 @@ bool ProjectUploadSession::append(
 
     if (result != 0 || receivedSize_ + decodedLength > expectedSize_) {
         free(decoded);
-        Core::Logger::error("[UPLOAD] Invalid chunk");
+        Core::Logger::error("[UPLOAD] Invalid chunk: decode=" + String(result) + ", decoded=" + String(decodedLength));
         return false;
     }
 
@@ -97,32 +106,76 @@ bool ProjectUploadSession::append(
 }
 
 bool ProjectUploadSession::commit(JsonDocument& project) {
+    const uint32_t startedAt = millis();
+    lastCommitError_ = UploadCommitError::None;
+
+    Core::Logger::info("[COMMIT][1/3] ENTER completeness: received=" + String(receivedSize_) + "/" + String(expectedSize_) + ", " + heapSnapshot());
+
     if (!active_ || !buffer_ || receivedSize_ != expectedSize_) {
-        Core::Logger::error("[UPLOAD] Incomplete upload: " + String(receivedSize_) + "/" + String(expectedSize_));
+        lastCommitError_ = UploadCommitError::IncompleteUpload;
+        Core::Logger::error("[COMMIT][1/3] FAIL incomplete_upload");
         return false;
     }
 
+    Core::Logger::info("[COMMIT][1/3] PASS completeness");
+
+    const uint32_t crcStartedAt = millis();
+    Core::Logger::info("[COMMIT][2/3] ENTER crc32");
     const uint32_t actualCrc32 = crc32(buffer_, receivedSize_);
+    Core::Logger::info(
+        "[COMMIT][2/3] CRC expected=" + String(expectedCrc32_, HEX) +
+        ", actual=" + String(actualCrc32, HEX) +
+        ", time=" + String(millis() - crcStartedAt) + " ms"
+    );
+
     if (actualCrc32 != expectedCrc32_) {
-        Core::Logger::error("[UPLOAD] CRC mismatch: expected=" + String(expectedCrc32_, HEX) + ", actual=" + String(actualCrc32, HEX));
+        lastCommitError_ = UploadCommitError::CrcMismatch;
+        Core::Logger::error("[COMMIT][2/3] FAIL crc_mismatch");
         abort();
         return false;
     }
 
+    Core::Logger::info("[COMMIT][2/3] PASS crc32");
+
     buffer_[receivedSize_] = 0;
+    const uint32_t jsonStartedAt = millis();
+    Core::Logger::info("[COMMIT][3/3] ENTER json_parse: bytes=" + String(receivedSize_) + ", " + heapSnapshot());
+
     const DeserializationError error = deserializeJson(
         project,
         reinterpret_cast<const char*>(buffer_),
         receivedSize_
     );
 
-    if (error || project.overflowed()) {
-        Core::Logger::error("[UPLOAD] Project JSON invalid: " + String(error.c_str()));
+    const bool overflowed = project.overflowed();
+    Core::Logger::info(
+        "[COMMIT][3/3] JSON result=" + String(error.c_str()) +
+        ", overflow=" + String(overflowed ? 1 : 0) +
+        ", memoryUsage=" + String(project.memoryUsage()) +
+        ", time=" + String(millis() - jsonStartedAt) + " ms, " + heapSnapshot()
+    );
+
+    if (error) {
+        lastCommitError_ = UploadCommitError::JsonParseFailed;
+        Core::Logger::error("[COMMIT][3/3] FAIL json_parse: " + String(error.c_str()));
         abort();
         return false;
     }
 
-    Core::Logger::info("[UPLOAD] CRC verified and JSON decoded");
+    if (overflowed) {
+        lastCommitError_ = UploadCommitError::JsonOverflow;
+        Core::Logger::error("[COMMIT][3/3] FAIL json_overflow");
+        abort();
+        return false;
+    }
+
+    Core::Logger::info(
+        "[COMMIT][3/3] PASS json_parse: scenes=" +
+        String(project["scenes"].as<JsonArrayConst>().size()) +
+        ", total=" + String(millis() - startedAt) + " ms"
+    );
+
+    // Keep the parsed JsonDocument alive, but the raw upload buffer is no longer needed.
     abort();
     return true;
 }
@@ -139,5 +192,17 @@ void ProjectUploadSession::abort() {
 bool ProjectUploadSession::active() const { return active_; }
 size_t ProjectUploadSession::received() const { return receivedSize_; }
 size_t ProjectUploadSession::expected() const { return expectedSize_; }
+UploadCommitError ProjectUploadSession::lastCommitError() const { return lastCommitError_; }
+
+const char* ProjectUploadSession::lastCommitErrorName() const {
+    switch (lastCommitError_) {
+        case UploadCommitError::None: return "none";
+        case UploadCommitError::IncompleteUpload: return "incomplete_upload";
+        case UploadCommitError::CrcMismatch: return "crc_mismatch";
+        case UploadCommitError::JsonParseFailed: return "json_parse_failed";
+        case UploadCommitError::JsonOverflow: return "json_overflow";
+        default: return "unknown";
+    }
+}
 
 }
