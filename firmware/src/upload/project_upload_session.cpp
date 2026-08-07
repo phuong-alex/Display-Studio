@@ -107,7 +107,6 @@ std::unique_ptr<JsonDocument> ProjectUploadSession::commit() {
         reinterpret_cast<const char*>(buffer_),
         receivedSize_
     );
-
     if (error) {
         lastCommitError_ = UploadCommitError::JsonParseFailed;
         Core::Logger::error("[COMMIT] JSON parse failed: " + String(error.c_str()));
@@ -125,9 +124,23 @@ std::unique_ptr<JsonDocument> ProjectUploadSession::commit() {
         String((*project)["scenes"].as<JsonArrayConst>().size()) +
         ", " + heapSnapshot()
     );
-
     abort();
     return project;
+}
+
+bool ProjectUploadSession::commit(JsonDocument& project) {
+    // Temporary compatibility bridge for the existing Protocol-4 BLE handler.
+    // It avoids changing transport in the first Core Refactor iteration.
+    auto owned = commit();
+    if (!owned) return false;
+    project.clear();
+    project.set(owned->as<JsonVariantConst>());
+    if (project.overflowed()) {
+        lastCommitError_ = UploadCommitError::JsonOverflow;
+        project.clear();
+        return false;
+    }
+    return true;
 }
 
 void ProjectUploadSession::abort() {
