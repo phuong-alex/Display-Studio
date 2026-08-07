@@ -5,6 +5,14 @@
 
 namespace DisplayStudio::Upload {
 
+enum class UploadCommitError {
+    None,
+    IncompleteUpload,
+    CrcMismatch,
+    JsonParseFailed,
+    JsonOverflow
+};
+
 class ProjectUploadSession {
 public:
     bool begin(size_t expectedSize, uint32_t expectedCrc32);
@@ -15,6 +23,8 @@ public:
     bool active() const;
     size_t received() const;
     size_t expected() const;
+    UploadCommitError lastCommitError() const;
+    const char* lastCommitErrorName() const;
 
 private:
     uint8_t* buffer_ = nullptr;
@@ -22,6 +32,7 @@ private:
     size_t receivedSize_ = 0;
     uint32_t expectedCrc32_ = 0;
     bool active_ = false;
+    UploadCommitError lastCommitError_ = UploadCommitError::None;
 
     static uint32_t crc32(const uint8_t* data, size_t length);
 };
