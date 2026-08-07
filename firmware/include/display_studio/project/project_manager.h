@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Arduino.h>
 #include <ArduinoJson.h>
 
 namespace DisplayStudio::Project {
@@ -18,12 +19,14 @@ public:
     bool installed() const;
     JsonVariantConst document() const;
     JsonVariantConst activeScene() const;
+    const String& lastError() const;
 
     void clear();
 
 private:
     JsonDocument project_;
     bool installed_ = false;
+    String lastError_;
 };
 
 ProjectManager& projectManager();
