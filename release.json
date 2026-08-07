@@ -1,7 +1,7 @@
 {
   "product": "Display Studio",
-  "release": "Display Studio 3.0.2.2 RCA Diagnostic",
-  "version": "3.0.2.2-rca.1",
+  "release": "Display Studio 4.0 LittleFS Project Storage",
+  "version": "4.0.1-littlefs-storage.1",
   "protocolVersion": 4,
-  "milestone": "Commit Pipeline Root Cause Analysis"
+  "milestone": "Project persistence moved from NVS to LittleFS"
 }
