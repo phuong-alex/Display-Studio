@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <LittleFS.h>
 #include <Preferences.h>
 #include <cstring>
 
@@ -8,12 +9,103 @@
 
 namespace DisplayStudio::Storage {
 namespace {
+constexpr const char* PROJECT_PATH = "/project.json";
+constexpr const char* PROJECT_TEMP_PATH = "/project.tmp";
+
+// Legacy NVS keys are read only for migration compatibility.
 constexpr const char* NAMESPACE = "displaystudio";
 constexpr const char* KEY_PROJECT_BLOB = "project_blob";
 constexpr const char* KEY_PROJECT_STRING = "project_v1";
 constexpr const char* KEY_LEGACY = "scene_config";
 
 ProjectStorage instance;
+bool littleFsReady = false;
+
+bool ensureLittleFs() {
+    if (littleFsReady) {
+        return true;
+    }
+
+    if (LittleFS.begin(false)) {
+        littleFsReady = true;
+    } else {
+        Core::Logger::warning(
+            "[STORAGE] LittleFS mount failed; formatting filesystem"
+        );
+        littleFsReady = LittleFS.begin(true);
+    }
+
+    if (!littleFsReady) {
+        Core::Logger::error("[STORAGE] LittleFS initialization failed");
+        return false;
+    }
+
+    Core::Logger::info(
+        "[STORAGE] LittleFS ready: total=" +
+        String(LittleFS.totalBytes()) +
+        ", used=" + String(LittleFS.usedBytes()) +
+        ", free=" + String(LittleFS.totalBytes() - LittleFS.usedBytes())
+    );
+    return true;
+}
+
+bool loadLegacyNvsBlob(uint8_t*& data, size_t& length) {
+    data = nullptr;
+    length = 0;
+
+    Preferences preferences;
+    if (!preferences.begin(NAMESPACE, true)) {
+        return false;
+    }
+
+    const size_t blobLength = preferences.getBytesLength(KEY_PROJECT_BLOB);
+    if (blobLength == 0 || blobLength > Config::MAX_PROJECT_BYTES) {
+        preferences.end();
+        return false;
+    }
+
+    uint8_t* payload = static_cast<uint8_t*>(malloc(blobLength + 1));
+    if (!payload) {
+        preferences.end();
+        Core::Logger::error(
+            "[STORAGE] Legacy NVS blob allocation failed: " +
+            String(blobLength + 1)
+        );
+        return false;
+    }
+
+    const size_t read = preferences.getBytes(
+        KEY_PROJECT_BLOB,
+        payload,
+        blobLength
+    );
+    preferences.end();
+
+    if (read != blobLength) {
+        free(payload);
+        return false;
+    }
+
+    payload[blobLength] = 0;
+    data = payload;
+    length = blobLength;
+    Core::Logger::info(
+        "[STORAGE] Legacy NVS blob loaded: " +
+        String(blobLength) + " bytes; migrates to LittleFS on next save"
+    );
+    return true;
+}
+
+void clearLegacyNvsProject() {
+    Preferences preferences;
+    if (!preferences.begin(NAMESPACE, false)) {
+        return;
+    }
+    preferences.remove(KEY_PROJECT_BLOB);
+    preferences.remove(KEY_PROJECT_STRING);
+    preferences.remove(KEY_LEGACY);
+    preferences.end();
+}
 }
 
 ProjectStorage& projectStorage() {
@@ -21,6 +113,7 @@ ProjectStorage& projectStorage() {
 }
 
 void ProjectStorage::begin() {
+    ensureLittleFs();
 }
 
 bool ProjectStorage::saveBlob(
@@ -38,34 +131,62 @@ bool ProjectStorage::saveBlob(
         return false;
     }
 
-    Preferences preferences;
-    if (!preferences.begin(NAMESPACE, false)) {
-        Core::Logger::error("[STORAGE] NVS open failed");
+    if (!ensureLittleFs()) {
         return false;
     }
 
-    const size_t written = preferences.putBytes(
-        KEY_PROJECT_BLOB,
-        data,
-        length
-    );
+    const size_t freeBytes =
+        LittleFS.totalBytes() - LittleFS.usedBytes();
 
-    if (written == length) {
-        preferences.remove(KEY_PROJECT_STRING);
-        preferences.remove(KEY_LEGACY);
+    if (freeBytes < length + 4096) {
+        Core::Logger::error(
+            "[STORAGE] LittleFS not enough space: need=" +
+            String(length) + ", free=" + String(freeBytes)
+        );
+        return false;
     }
 
-    preferences.end();
+    LittleFS.remove(PROJECT_TEMP_PATH);
 
-    const bool ok = written == length;
+    File file = LittleFS.open(PROJECT_TEMP_PATH, FILE_WRITE);
+    if (!file) {
+        Core::Logger::error("[STORAGE] Project temp file open failed");
+        return false;
+    }
+
+    const size_t written = file.write(data, length);
+    file.flush();
+    file.close();
+
+    if (written != length) {
+        LittleFS.remove(PROJECT_TEMP_PATH);
+        Core::Logger::error(
+            "[STORAGE] LittleFS write failed: wrote=" +
+            String(written) + "/" + String(length)
+        );
+        return false;
+    }
+
+    // Replace only after a complete write, so a failed save cannot destroy
+    // the last known-good Project.
+    LittleFS.remove(PROJECT_PATH);
+    if (!LittleFS.rename(PROJECT_TEMP_PATH, PROJECT_PATH)) {
+        LittleFS.remove(PROJECT_TEMP_PATH);
+        Core::Logger::error("[STORAGE] Project file commit failed");
+        return false;
+    }
+
+    // Once LittleFS owns the Project, release obsolete NVS storage.
+    clearLegacyNvsProject();
+
     Core::Logger::info(
-        ok
-            ? "[STORAGE] Blob saved: " + String(length) +
-                " bytes, freeHeap=" + String(ESP.getFreeHeap())
-            : "[STORAGE] Blob save failed: wrote " +
-                String(written) + "/" + String(length) + " bytes"
+        "[STORAGE] LittleFS Project saved: " +
+        String(length) +
+        " bytes, fsFree=" +
+        String(LittleFS.totalBytes() - LittleFS.usedBytes()) +
+        ", freeHeap=" + String(ESP.getFreeHeap())
     );
-    return ok;
+    return true;
 }
 
 bool ProjectStorage::loadBlob(
@@ -75,67 +196,60 @@ bool ProjectStorage::loadBlob(
     data = nullptr;
     length = 0;
 
-    Preferences preferences;
-    if (!preferences.begin(NAMESPACE, true)) {
-        Core::Logger::error("[STORAGE] NVS open failed");
-        return false;
-    }
+    if (ensureLittleFs() && LittleFS.exists(PROJECT_PATH)) {
+        File file = LittleFS.open(PROJECT_PATH, FILE_READ);
+        if (!file) {
+            Core::Logger::error("[STORAGE] Project file open failed");
+            return false;
+        }
 
-    const size_t blobLength =
-        preferences.getBytesLength(KEY_PROJECT_BLOB);
+        const size_t fileLength = file.size();
+        if (fileLength == 0 || fileLength > Config::MAX_PROJECT_BYTES) {
+            file.close();
+            Core::Logger::error(
+                "[STORAGE] Stored Project file size invalid: " +
+                String(fileLength)
+            );
+            return false;
+        }
 
-    if (blobLength == 0) {
-        preferences.end();
-        return false;
-    }
+        uint8_t* payload = static_cast<uint8_t*>(malloc(fileLength + 1));
+        if (!payload) {
+            file.close();
+            Core::Logger::error(
+                "[STORAGE] Project file allocation failed: " +
+                String(fileLength + 1) +
+                ", freeHeap=" + String(ESP.getFreeHeap())
+            );
+            return false;
+        }
 
-    if (blobLength > Config::MAX_PROJECT_BYTES) {
-        preferences.end();
-        Core::Logger::error(
-            "[STORAGE] Stored blob too large: " + String(blobLength)
-        );
-        return false;
-    }
+        const size_t read = file.read(payload, fileLength);
+        file.close();
 
-    uint8_t* payload = static_cast<uint8_t*>(
-        malloc(blobLength + 1)
-    );
+        if (read != fileLength) {
+            free(payload);
+            Core::Logger::error(
+                "[STORAGE] Project file read failed: " +
+                String(read) + "/" + String(fileLength)
+            );
+            return false;
+        }
 
-    if (!payload) {
-        preferences.end();
-        Core::Logger::error(
-            "[STORAGE] Blob allocation failed: " +
-            String(blobLength + 1) +
+        payload[fileLength] = 0;
+        data = payload;
+        length = fileLength;
+
+        Core::Logger::info(
+            "[STORAGE] LittleFS Project loaded: " +
+            String(length) +
             " bytes, freeHeap=" + String(ESP.getFreeHeap())
         );
-        return false;
+        return true;
     }
 
-    const size_t read = preferences.getBytes(
-        KEY_PROJECT_BLOB,
-        payload,
-        blobLength
-    );
-    preferences.end();
-
-    if (read != blobLength) {
-        free(payload);
-        Core::Logger::error(
-            "[STORAGE] Blob read failed: " +
-            String(read) + "/" + String(blobLength)
-        );
-        return false;
-    }
-
-    payload[blobLength] = 0;
-    data = payload;
-    length = blobLength;
-
-    Core::Logger::info(
-        "[STORAGE] Blob loaded: " + String(length) +
-        " bytes, freeHeap=" + String(ESP.getFreeHeap())
-    );
-    return true;
+    // Migration path for devices upgraded from NVS Project storage.
+    return loadLegacyNvsBlob(data, length);
 }
 
 bool ProjectStorage::verifyBlob(
@@ -185,15 +299,12 @@ bool ProjectStorage::save(
         return false;
     }
 
-    char* payload = static_cast<char*>(
-        malloc(payloadLength + 1)
-    );
-
+    char* payload = static_cast<char*>(malloc(payloadLength + 1));
     if (!payload) {
         Core::Logger::error(
             "[STORAGE] Serialize buffer allocation failed: " +
             String(payloadLength + 1) +
-            " bytes, freeHeap=" + String(ESP.getFreeHeap())
+            ", freeHeap=" + String(ESP.getFreeHeap())
         );
         return false;
     }
@@ -206,9 +317,7 @@ bool ProjectStorage::save(
 
     if (serialized != payloadLength) {
         free(payload);
-        Core::Logger::error(
-            "[STORAGE] Serialization length mismatch"
-        );
+        Core::Logger::error("[STORAGE] Serialization length mismatch");
         return false;
     }
 
@@ -236,31 +345,25 @@ bool ProjectStorage::load(
 
         if (error || project.overflowed()) {
             Core::Logger::error(
-                "[STORAGE] Stored blob JSON invalid: " +
+                "[STORAGE] Stored Project JSON invalid: " +
                 String(error.c_str())
             );
             return false;
         }
-
         return true;
     }
 
-    // Compatibility path for older string-based releases.
+    // Final compatibility path for very old string-based releases.
     Preferences preferences;
     if (!preferences.begin(NAMESPACE, true)) {
-        Core::Logger::error("[STORAGE] NVS open failed");
+        Core::Logger::info("[STORAGE] No stored Project found");
         return false;
     }
 
-    String serialized = preferences.getString(
-        KEY_PROJECT_STRING,
-        ""
-    );
-
+    String serialized = preferences.getString(KEY_PROJECT_STRING, "");
     if (serialized.isEmpty()) {
         serialized = preferences.getString(KEY_LEGACY, "");
     }
-
     preferences.end();
 
     if (serialized.isEmpty()) {
@@ -268,9 +371,7 @@ bool ProjectStorage::load(
         return false;
     }
 
-    const DeserializationError error =
-        deserializeJson(project, serialized);
-
+    const DeserializationError error = deserializeJson(project, serialized);
     if (error || project.overflowed()) {
         Core::Logger::error(
             "[STORAGE] Legacy string JSON invalid: " +
@@ -280,7 +381,7 @@ bool ProjectStorage::load(
     }
 
     Core::Logger::info(
-        "[STORAGE] Legacy string loaded; migrates on next save"
+        "[STORAGE] Legacy string loaded; migrates to LittleFS on next save"
     );
     return true;
 }
@@ -301,15 +402,12 @@ bool ProjectStorage::verify(
         return false;
     }
 
-    char* payload = static_cast<char*>(
-        malloc(payloadLength + 1)
-    );
-
+    char* payload = static_cast<char*>(malloc(payloadLength + 1));
     if (!payload) {
         Core::Logger::error(
             "[STORAGE] Verify buffer allocation failed: " +
             String(payloadLength + 1) +
-            " bytes, freeHeap=" + String(ESP.getFreeHeap())
+            ", freeHeap=" + String(ESP.getFreeHeap())
         );
         return false;
     }
@@ -322,15 +420,10 @@ bool ProjectStorage::verify(
 
     if (serialized != payloadLength) {
         free(payload);
-        Core::Logger::error(
-            "[STORAGE] Verify serialization mismatch"
-        );
+        Core::Logger::error("[STORAGE] Verify serialization mismatch");
         return false;
     }
 
-    // Important: verification is byte-for-byte against NVS. We no longer
-    // deserialize the stored Project into a second JsonDocument, which removes
-    // one complete JSON tree from peak install memory.
     const bool ok = verifyBlob(
         reinterpret_cast<const uint8_t*>(payload),
         payloadLength
@@ -340,17 +433,19 @@ bool ProjectStorage::verify(
 }
 
 void ProjectStorage::clear() {
-    Preferences preferences;
-    if (preferences.begin(NAMESPACE, false)) {
-        preferences.remove(KEY_PROJECT_BLOB);
-        preferences.remove(KEY_PROJECT_STRING);
-        preferences.remove(KEY_LEGACY);
-        preferences.end();
+    if (ensureLittleFs()) {
+        LittleFS.remove(PROJECT_TEMP_PATH);
+        LittleFS.remove(PROJECT_PATH);
     }
+    clearLegacyNvsProject();
     Core::Logger::info("[STORAGE] Stored Project cleared");
 }
 
 bool ProjectStorage::exists() {
+    if (ensureLittleFs() && LittleFS.exists(PROJECT_PATH)) {
+        return true;
+    }
+
     Preferences preferences;
     if (!preferences.begin(NAMESPACE, true)) {
         return false;
