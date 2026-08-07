@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <memory>
 
 namespace DisplayStudio::Upload {
 
@@ -10,14 +11,15 @@ enum class UploadCommitError {
     IncompleteUpload,
     CrcMismatch,
     JsonParseFailed,
-    JsonOverflow
+    JsonOverflow,
+    AllocationFailed
 };
 
 class ProjectUploadSession {
 public:
     bool begin(size_t expectedSize, uint32_t expectedCrc32);
     bool append(size_t offset, const String& base64Data);
-    bool commit(JsonDocument& project);
+    std::unique_ptr<JsonDocument> commit();
     void abort();
 
     bool active() const;
