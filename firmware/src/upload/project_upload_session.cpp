@@ -22,10 +22,7 @@ ProjectUploadSession& projectUploadSession() {
     return instance;
 }
 
-uint32_t ProjectUploadSession::crc32(
-    const uint8_t* data,
-    size_t length
-) {
+uint32_t ProjectUploadSession::crc32(const uint8_t* data, size_t length) {
     uint32_t crc = 0xFFFFFFFFUL;
     for (size_t index = 0; index < length; ++index) {
         crc ^= data[index];
@@ -37,10 +34,7 @@ uint32_t ProjectUploadSession::crc32(
     return ~crc;
 }
 
-bool ProjectUploadSession::begin(
-    size_t expectedSize,
-    uint32_t expectedCrc32
-) {
+bool ProjectUploadSession::begin(size_t expectedSize, uint32_t expectedCrc32) {
     abort();
     lastCommitError_ = UploadCommitError::None;
 
@@ -63,10 +57,7 @@ bool ProjectUploadSession::begin(
     return true;
 }
 
-bool ProjectUploadSession::append(
-    size_t offset,
-    const String& base64Data
-) {
+bool ProjectUploadSession::append(size_t offset, const String& base64Data) {
     if (!active_ || !buffer_) {
         Core::Logger::error("[UPLOAD] No active session");
         return false;
@@ -110,13 +101,11 @@ bool ProjectUploadSession::commit(JsonDocument& project) {
     lastCommitError_ = UploadCommitError::None;
 
     Core::Logger::info("[COMMIT][1/3] ENTER completeness: received=" + String(receivedSize_) + "/" + String(expectedSize_) + ", " + heapSnapshot());
-
     if (!active_ || !buffer_ || receivedSize_ != expectedSize_) {
         lastCommitError_ = UploadCommitError::IncompleteUpload;
         Core::Logger::error("[COMMIT][1/3] FAIL incomplete_upload");
         return false;
     }
-
     Core::Logger::info("[COMMIT][1/3] PASS completeness");
 
     const uint32_t crcStartedAt = millis();
@@ -127,41 +116,34 @@ bool ProjectUploadSession::commit(JsonDocument& project) {
         ", actual=" + String(actualCrc32, HEX) +
         ", time=" + String(millis() - crcStartedAt) + " ms"
     );
-
     if (actualCrc32 != expectedCrc32_) {
         lastCommitError_ = UploadCommitError::CrcMismatch;
         Core::Logger::error("[COMMIT][2/3] FAIL crc_mismatch");
         abort();
         return false;
     }
-
     Core::Logger::info("[COMMIT][2/3] PASS crc32");
 
     buffer_[receivedSize_] = 0;
     const uint32_t jsonStartedAt = millis();
     Core::Logger::info("[COMMIT][3/3] ENTER json_parse: bytes=" + String(receivedSize_) + ", " + heapSnapshot());
-
     const DeserializationError error = deserializeJson(
         project,
         reinterpret_cast<const char*>(buffer_),
         receivedSize_
     );
-
     const bool overflowed = project.overflowed();
     Core::Logger::info(
         "[COMMIT][3/3] JSON result=" + String(error.c_str()) +
         ", overflow=" + String(overflowed ? 1 : 0) +
-        ", memoryUsage=" + String(project.memoryUsage()) +
         ", time=" + String(millis() - jsonStartedAt) + " ms, " + heapSnapshot()
     );
-
     if (error) {
         lastCommitError_ = UploadCommitError::JsonParseFailed;
         Core::Logger::error("[COMMIT][3/3] FAIL json_parse: " + String(error.c_str()));
         abort();
         return false;
     }
-
     if (overflowed) {
         lastCommitError_ = UploadCommitError::JsonOverflow;
         Core::Logger::error("[COMMIT][3/3] FAIL json_overflow");
@@ -175,7 +157,6 @@ bool ProjectUploadSession::commit(JsonDocument& project) {
         ", total=" + String(millis() - startedAt) + " ms"
     );
 
-    // Keep the parsed JsonDocument alive, but the raw upload buffer is no longer needed.
     abort();
     return true;
 }
