@@ -5,11 +5,17 @@ const buffers = new WeakMap();
 let activeBle = null;
 let latestInfo = null;
 let refreshTimer = null;
+let refreshBlocked = false;
+let resumeTimer = null;
+
+const DIAGNOSTICS_INTERVAL_MS = 15000;
+const POST_RENDER_QUIET_MS = 40000;
 
 const originalConnect = DisplayStudioBle.prototype.connect;
 DisplayStudioBle.prototype.connect = async function (...args) {
   const device = await originalConnect.apply(this, args);
   activeBle = this;
+  refreshBlocked = false;
   scheduleRefresh(true);
   return device;
 };
@@ -17,6 +23,8 @@ DisplayStudioBle.prototype.connect = async function (...args) {
 const originalDisconnect = DisplayStudioBle.prototype.disconnect;
 DisplayStudioBle.prototype.disconnect = function (...args) {
   if (activeBle === this) activeBle = null;
+  clearResumeTimer();
+  refreshBlocked = false;
   scheduleRefresh(false);
   setStatus("Chưa kết nối", "offline");
   return originalDisconnect.apply(this, args);
@@ -25,9 +33,35 @@ DisplayStudioBle.prototype.disconnect = function (...args) {
 const originalHandleDisconnect = DisplayStudioBle.prototype.handleDisconnect;
 DisplayStudioBle.prototype.handleDisconnect = function (...args) {
   if (activeBle === this) activeBle = null;
+  clearResumeTimer();
+  refreshBlocked = false;
   scheduleRefresh(false);
   setStatus("Chưa kết nối", "offline");
   return originalHandleDisconnect.apply(this, args);
+};
+
+// Deploy and display refresh share the same BLE/CPU resources as Diagnostics.
+// Pause background polling from upload_begin until the physical e-paper refresh
+// has had enough quiet time to complete. `apply` only queues render and returns
+// before the display worker is finished, so resuming immediately after its ACK
+// would still interfere with the BUSY wait window.
+const originalRequest = DisplayStudioBle.prototype.request;
+DisplayStudioBle.prototype.request = async function (message, timeoutMs) {
+  const command = message?.command || "";
+
+  if (command === "upload_begin") {
+    blockRefresh("Deploy đang chạy");
+  }
+
+  try {
+    return await originalRequest.call(this, message, timeoutMs);
+  } finally {
+    if (command === "upload_abort") {
+      resumeRefreshSoon(1200);
+    } else if (command === "apply") {
+      resumeRefreshSoon(POST_RENDER_QUIET_MS);
+    }
+  }
 };
 
 const originalHandleNotification = DisplayStudioBle.prototype.handleNotification;
@@ -38,6 +72,27 @@ DisplayStudioBle.prototype.handleNotification = function (event) {
 
 function $(selector) {
   return document.querySelector(selector);
+}
+
+function clearResumeTimer() {
+  if (resumeTimer) clearTimeout(resumeTimer);
+  resumeTimer = null;
+}
+
+function blockRefresh(reason = "Tạm dừng") {
+  clearResumeTimer();
+  refreshBlocked = true;
+  const updated = $("#diag-updated");
+  if (updated) updated.textContent = `${reason} · Diagnostics tạm dừng`;
+}
+
+function resumeRefreshSoon(delayMs = 0) {
+  clearResumeTimer();
+  resumeTimer = setTimeout(() => {
+    resumeTimer = null;
+    refreshBlocked = false;
+    if (activeBle?.connected) refresh();
+  }, delayMs);
 }
 
 function formatBytes(value) {
@@ -143,6 +198,8 @@ async function refresh() {
     return;
   }
 
+  if (refreshBlocked) return;
+
   if (button) button.disabled = true;
   try {
     await activeBle.send({ command: "get_runtime_info" });
@@ -157,8 +214,8 @@ function scheduleRefresh(enabled) {
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = null;
   if (enabled) {
-    setTimeout(refresh, 600);
-    refreshTimer = setInterval(refresh, 5000);
+    setTimeout(refresh, 800);
+    refreshTimer = setInterval(refresh, DIAGNOSTICS_INTERVAL_MS);
   }
 }
 
