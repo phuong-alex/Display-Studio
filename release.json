@@ -1,7 +1,7 @@
 {
   "product": "Display Studio",
-  "release": "Display Studio 4.0 LittleFS Project Storage",
-  "version": "4.0.1-littlefs-storage.1",
+  "release": "Display Studio 4.1 Dynamic Validator",
+  "version": "4.1.0-dynamic-validator.1",
   "protocolVersion": 4,
-  "milestone": "Project persistence moved from NVS to LittleFS"
+  "milestone": "Remove fixed scene-count validation limit and rely on runtime/storage capabilities"
 }
