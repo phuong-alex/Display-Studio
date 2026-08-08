@@ -98,10 +98,10 @@ bool ProjectModel::validate(
         return false;
     }
 
-    if (scenes.size() > 16) {
-        error = "too_many_scenes";
-        return false;
-    }
+    // Scene count is intentionally not capped here. ProjectModel validates
+    // schema and semantic correctness only. Runtime/storage limits are enforced
+    // by their owning layers (upload size, heap availability and LittleFS).
+    // This keeps the Project schema portable across different Runtime targets.
 
     const String activeSceneId = String(
         static_cast<const char*>(
