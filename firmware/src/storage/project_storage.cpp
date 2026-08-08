@@ -101,9 +101,18 @@ void clearLegacyNvsProject() {
     if (!preferences.begin(NAMESPACE, false)) {
         return;
     }
-    preferences.remove(KEY_PROJECT_BLOB);
-    preferences.remove(KEY_PROJECT_STRING);
-    preferences.remove(KEY_LEGACY);
+
+    // Preferences::remove() logs an ESP-IDF error when a key is absent.
+    // Check first so normal post-migration operation stays quiet.
+    if (preferences.isKey(KEY_PROJECT_BLOB)) {
+        preferences.remove(KEY_PROJECT_BLOB);
+    }
+    if (preferences.isKey(KEY_PROJECT_STRING)) {
+        preferences.remove(KEY_PROJECT_STRING);
+    }
+    if (preferences.isKey(KEY_LEGACY)) {
+        preferences.remove(KEY_LEGACY);
+    }
     preferences.end();
 }
 }
@@ -135,18 +144,20 @@ bool ProjectStorage::saveBlob(
         return false;
     }
 
-    const size_t freeBytes =
+    const size_t availableBytes =
         LittleFS.totalBytes() - LittleFS.usedBytes();
 
-    if (freeBytes < length + 4096) {
+    if (availableBytes < length + 4096) {
         Core::Logger::error(
             "[STORAGE] LittleFS not enough space: need=" +
-            String(length) + ", free=" + String(freeBytes)
+            String(length) + ", free=" + String(availableBytes)
         );
         return false;
     }
 
-    LittleFS.remove(PROJECT_TEMP_PATH);
+    if (LittleFS.exists(PROJECT_TEMP_PATH)) {
+        LittleFS.remove(PROJECT_TEMP_PATH);
+    }
 
     File file = LittleFS.open(PROJECT_TEMP_PATH, FILE_WRITE);
     if (!file) {
@@ -159,7 +170,9 @@ bool ProjectStorage::saveBlob(
     file.close();
 
     if (written != length) {
-        LittleFS.remove(PROJECT_TEMP_PATH);
+        if (LittleFS.exists(PROJECT_TEMP_PATH)) {
+            LittleFS.remove(PROJECT_TEMP_PATH);
+        }
         Core::Logger::error(
             "[STORAGE] LittleFS write failed: wrote=" +
             String(written) + "/" + String(length)
@@ -169,9 +182,13 @@ bool ProjectStorage::saveBlob(
 
     // Replace only after a complete write, so a failed save cannot destroy
     // the last known-good Project.
-    LittleFS.remove(PROJECT_PATH);
+    if (LittleFS.exists(PROJECT_PATH)) {
+        LittleFS.remove(PROJECT_PATH);
+    }
     if (!LittleFS.rename(PROJECT_TEMP_PATH, PROJECT_PATH)) {
-        LittleFS.remove(PROJECT_TEMP_PATH);
+        if (LittleFS.exists(PROJECT_TEMP_PATH)) {
+            LittleFS.remove(PROJECT_TEMP_PATH);
+        }
         Core::Logger::error("[STORAGE] Project file commit failed");
         return false;
     }
@@ -432,10 +449,45 @@ bool ProjectStorage::verify(
     return ok;
 }
 
+size_t ProjectStorage::totalBytes() {
+    return ensureLittleFs() ? LittleFS.totalBytes() : 0;
+}
+
+size_t ProjectStorage::usedBytes() {
+    return ensureLittleFs() ? LittleFS.usedBytes() : 0;
+}
+
+size_t ProjectStorage::freeBytes() {
+    if (!ensureLittleFs()) {
+        return 0;
+    }
+    const size_t total = LittleFS.totalBytes();
+    const size_t used = LittleFS.usedBytes();
+    return total >= used ? total - used : 0;
+}
+
+size_t ProjectStorage::projectBytes() {
+    if (!ensureLittleFs() || !LittleFS.exists(PROJECT_PATH)) {
+        return 0;
+    }
+
+    File file = LittleFS.open(PROJECT_PATH, FILE_READ);
+    if (!file) {
+        return 0;
+    }
+    const size_t size = file.size();
+    file.close();
+    return size;
+}
+
 void ProjectStorage::clear() {
     if (ensureLittleFs()) {
-        LittleFS.remove(PROJECT_TEMP_PATH);
-        LittleFS.remove(PROJECT_PATH);
+        if (LittleFS.exists(PROJECT_TEMP_PATH)) {
+            LittleFS.remove(PROJECT_TEMP_PATH);
+        }
+        if (LittleFS.exists(PROJECT_PATH)) {
+            LittleFS.remove(PROJECT_PATH);
+        }
     }
     clearLegacyNvsProject();
     Core::Logger::info("[STORAGE] Stored Project cleared");
