@@ -26,6 +26,12 @@ public:
     bool loadBlob(uint8_t*& data, size_t& length);
     bool verifyBlob(const uint8_t* expected, size_t length);
 
+    // Read-only storage metrics for Runtime Capability / Diagnostics APIs.
+    size_t totalBytes();
+    size_t usedBytes();
+    size_t freeBytes();
+    size_t projectBytes();
+
     void clear();
     bool exists();
 };
