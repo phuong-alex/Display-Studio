@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#101828">
   <title>Display Studio Sprint 1.5</title>
-  <link rel="stylesheet" href="./style.css?v=15">
+  <link rel="stylesheet" href="./style.css?v=16">
 </head>
 <body>
   <header class="topbar">
@@ -130,6 +130,60 @@
         </div>
       </div>
 
+      <div class="panel diagnostics-panel">
+        <div class="panel-heading diagnostics-heading">
+          <div>
+            <div class="diagnostics-title-row">
+              <h2>Diagnostics</h2>
+              <span id="diagnostics-health" class="badge neutral">Chưa có dữ liệu</span>
+            </div>
+            <p id="diag-updated" class="hint">Kết nối thiết bị để đọc Runtime.</p>
+          </div>
+          <div class="button-row">
+            <button id="diagnostics-refresh" class="button ghost" type="button">Refresh</button>
+            <button id="diagnostics-copy" class="button ghost" type="button">Copy Diagnostics</button>
+          </div>
+        </div>
+
+        <div class="diagnostics-grid">
+          <section class="diagnostic-card">
+            <h3>Runtime</h3>
+            <dl class="diagnostic-list">
+              <dt>Firmware</dt><dd id="diag-firmware">—</dd>
+              <dt>Protocol</dt><dd id="diag-protocol">—</dd>
+              <dt>Uptime</dt><dd id="diag-uptime">—</dd>
+            </dl>
+          </section>
+
+          <section class="diagnostic-card">
+            <h3>Memory</h3>
+            <dl class="diagnostic-list">
+              <dt>Free Heap</dt><dd id="diag-heap-free">—</dd>
+              <dt>Largest Block</dt><dd id="diag-heap-largest">—</dd>
+              <dt>Minimum Heap</dt><dd id="diag-heap-min">—</dd>
+            </dl>
+          </section>
+
+          <section class="diagnostic-card">
+            <h3>LittleFS</h3>
+            <dl class="diagnostic-list">
+              <dt>Total</dt><dd id="diag-fs-total">—</dd>
+              <dt>Used</dt><dd id="diag-fs-used">—</dd>
+              <dt>Free</dt><dd id="diag-fs-free">—</dd>
+            </dl>
+          </section>
+
+          <section class="diagnostic-card">
+            <h3>Project</h3>
+            <dl class="diagnostic-list">
+              <dt>Size</dt><dd id="diag-project-size">—</dd>
+              <dt>Scenes</dt><dd id="diag-project-scenes">—</dd>
+              <dt>Active Scene</dt><dd id="diag-active-scene">—</dd>
+            </dl>
+          </section>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="panel-heading">
           <h2>BLE Log</h2>
@@ -139,6 +193,7 @@
       </div>
     </section>
   </main>
-  <script type="module" src="./app.js?v=15"></script>
+  <script type="module" src="./diagnostics.js?v=1"></script>
+  <script type="module" src="./app.js?v=16"></script>
 </body>
 </html>
