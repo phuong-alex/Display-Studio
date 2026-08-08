@@ -23,6 +23,8 @@ const elements = {
 };
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
+const textEncoder = new TextEncoder();
+const PROJECT_CHUNK_BYTES = 384;
 let selectedSceneId = "main";
 let projectState = null;
 
@@ -40,6 +42,63 @@ function setConnected(connected) {
   elements.deployButton.disabled = !connected;
   elements.rebootButton.disabled = !connected;
   elements.factoryResetButton.disabled = !connected;
+}
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (const value of bytes) {
+    crc ^= value;
+    for (let bit = 0; bit < 8; bit++) {
+      crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  }
+  return btoa(binary);
+}
+
+async function uploadProject(project) {
+  const bytes = textEncoder.encode(JSON.stringify(project));
+  const checksum = crc32(bytes);
+  const chunkCount = Math.ceil(bytes.length / PROJECT_CHUNK_BYTES);
+
+  log("[UPLOAD] Starting streaming session.", {
+    bytes: bytes.length,
+    chunks: chunkCount,
+    crc32: checksum.toString(16).padStart(8, "0")
+  });
+
+  await ble.request({
+    command: "upload_begin",
+    size: bytes.length,
+    crc32: checksum
+  }, 15000);
+
+  try {
+    for (let offset = 0, index = 0; offset < bytes.length; offset += PROJECT_CHUNK_BYTES, index++) {
+      const chunk = bytes.slice(offset, offset + PROJECT_CHUNK_BYTES);
+      await ble.request({
+        command: "upload_chunk",
+        offset,
+        data: bytesToBase64(chunk)
+      }, 20000);
+
+      const percent = Math.round((offset + chunk.length) * 100 / bytes.length);
+      log(`[UPLOAD] Chunk ${index + 1}/${chunkCount} accepted (${percent}%).`);
+    }
+
+    await ble.request({ command: "upload_commit" }, 45000);
+    log("[UPLOAD] CRC verified, Project installed and stored.");
+  } catch (error) {
+    await ble.request({ command: "upload_abort" }, 5000).catch(() => {});
+    throw error;
+  }
 }
 
 function dateParts(timezone = elements.timezone.value) {
@@ -300,15 +359,14 @@ elements.deployButton.addEventListener("click", async () => {
     const active = project.scenes.find((scene) => scene.id === project.activeSceneId);
     const runtime = active.config.scene.runtime;
     log("Sending Project...", { name: project.name, scenes: project.scenes.length, activeSceneId: project.activeSceneId });
-    log("Step 1/3: Installing Project...");
-    await ble.request({ command: "set_project", project }, 45000);
-    log("Project installed and verified.");
+    log("Step 1/3: Streaming and installing Project...");
+    await uploadProject(project);
     log("Step 2/3: Synchronizing time...");
     await ble.request({ command: "set_time", epochMs: Date.now(), timezone: runtime.timezone, timezoneOffsetMinutes: timezoneOffsetMinutes(runtime.timezone) });
     log("Time synchronized.");
     log("Step 3/3: Rendering active Scene...");
     await ble.request({ command: "apply" }, 30000);
-    log("Deploy completed. Project verified, stored and rendered.");
+    log("Deploy completed. Project verified, stored and render queued.");
   } catch (error) { log(`Deploy failed: ${error.message}`); }
 });
 
