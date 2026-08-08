@@ -28,6 +28,8 @@ hr { margin: 22px 0; border: 0; border-top: 1px solid #e4e7ec; }
 .badge.offline { background: #fee4e2; color: #b42318; }
 .badge.online { background: #d1fadf; color: #067647; }
 .badge.neutral { background: #eaecf0; color: #344054; }
+.badge.warning { background: #fef0c7; color: #b54708; }
+.badge.critical { background: #fee4e2; color: #b42318; }
 .device-info { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 8px 10px; margin: 0; font-size: 14px; }
 .device-info dt { color: #667085; }
 .device-info dd { margin: 0; overflow-wrap: anywhere; font-weight: 700; }
@@ -50,9 +52,26 @@ hr { margin: 22px 0; border: 0; border-top: 1px solid #e4e7ec; }
 .preview-lunar { margin-top: 1%; color: #475467; font-size: clamp(11px, 2vw, 20px); font-weight: 750; }
 .actions-panel p { color: #475467; }
 .danger-row { margin-top: 14px; padding-top: 14px; border-top: 1px solid #e4e7ec; }
+.diagnostics-panel { overflow: hidden; }
+.diagnostics-heading { align-items: flex-start; margin-bottom: 16px; }
+.diagnostics-heading h2 { margin-bottom: 0; }
+.diagnostics-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.diagnostics-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.diagnostic-card { border: 1px solid #e4e7ec; border-radius: 12px; padding: 14px; background: #fcfcfd; }
+.diagnostic-card h3 { margin: 0 0 12px; color: #344054; font-size: 14px; }
+.diagnostic-list { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; margin: 0; font-size: 13px; }
+.diagnostic-list dt { color: #667085; }
+.diagnostic-list dd { margin: 0; color: #101828; font-weight: 800; text-align: right; overflow-wrap: anywhere; }
 pre { min-height: 180px; max-height: 340px; overflow: auto; border-radius: 10px; padding: 14px; background: #101828; color: #d0d5dd; white-space: pre-wrap; font: 12px/1.5 Consolas, monospace; }
+@media (max-width: 1080px) {
+  .diagnostics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 @media (max-width: 860px) {
   .topbar, .connection-box { align-items: flex-start; flex-direction: column; }
   .layout { grid-template-columns: 1fr; }
   .button-row { flex-wrap: wrap; }
+  .diagnostics-heading { flex-direction: column; }
+}
+@media (max-width: 560px) {
+  .diagnostics-grid { grid-template-columns: 1fr; }
 }
