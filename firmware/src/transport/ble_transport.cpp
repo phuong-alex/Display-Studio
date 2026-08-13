@@ -11,6 +11,7 @@
 #include "display_studio/core/logger.h"
 #include "display_studio/device/device_identity.h"
 #include "display_studio/project/project_manager.h"
+#include "display_studio/runtime/runtime_dispatcher.h"
 #include "display_studio/runtime/runtime_info.h"
 #include "display_studio/runtime/scene_runtime.h"
 #include "display_studio/runtime/time_service.h"
@@ -153,7 +154,14 @@ void sendDeviceInfo() {
 
 void sendRuntimeInfo(const String& requestId) {
     JsonDocument response;
-    Runtime::buildRuntimeInfo(response);
+    const Runtime::RuntimeResult result = Runtime::runtimeDispatcher().execute(
+        Runtime::RuntimeCommand::GetRuntimeInfo,
+        &response
+    );
+    if (!result.success) {
+        sendStatus(false, "runtime_info_failed", requestId);
+        return;
+    }
     if (!requestId.isEmpty()) {
         response["requestId"] = requestId;
     }
@@ -206,11 +214,15 @@ void handleLine(const String& line) {
     if (command == "ping") { sendStatus(true, "pong", requestId); return; }
 
     if (command == "set_time") {
-        const bool ok = Runtime::timeService().setFromBrowser(
-            request["epochMs"] | 0LL,
-            request["timezoneOffsetMinutes"] | 420
+        Runtime::SetTimeCommandArgs args;
+        args.epochMs = request["epochMs"] | 0LL;
+        args.timezoneOffsetMinutes = request["timezoneOffsetMinutes"] | 420;
+        const Runtime::RuntimeResult result = Runtime::runtimeDispatcher().executeSetTime(args);
+        sendStatus(
+            result.success,
+            result.success ? "time_synchronized" : "time_sync_failed",
+            requestId
         );
-        sendStatus(ok, ok ? "time_synchronized" : "time_sync_failed", requestId);
         return;
     }
 
@@ -278,8 +290,12 @@ void handleLine(const String& line) {
     }
 
     if (command == "apply") {
-        const bool rendered = Runtime::sceneRuntime().renderNow();
-        sendStatus(rendered, rendered ? "scene_rendered" : "scene_render_failed", requestId);
+        const Runtime::RuntimeResult result = Runtime::runtimeDispatcher().executeApply();
+        sendStatus(
+            result.success,
+            result.success ? "scene_rendered" : "scene_render_failed",
+            requestId
+        );
         return;
     }
 
