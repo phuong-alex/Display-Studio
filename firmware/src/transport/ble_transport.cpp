@@ -290,8 +290,12 @@ void handleLine(const String& line) {
     }
 
     if (command == "apply") {
-        const bool rendered = Runtime::sceneRuntime().renderNow();
-        sendStatus(rendered, rendered ? "scene_rendered" : "scene_render_failed", requestId);
+        const Runtime::RuntimeResult result = Runtime::runtimeDispatcher().executeApply();
+        sendStatus(
+            result.success,
+            result.success ? "scene_rendered" : "scene_render_failed",
+            requestId
+        );
         return;
     }
 
