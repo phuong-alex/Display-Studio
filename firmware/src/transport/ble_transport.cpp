@@ -214,11 +214,15 @@ void handleLine(const String& line) {
     if (command == "ping") { sendStatus(true, "pong", requestId); return; }
 
     if (command == "set_time") {
-        const bool ok = Runtime::timeService().setFromBrowser(
-            request["epochMs"] | 0LL,
-            request["timezoneOffsetMinutes"] | 420
+        Runtime::SetTimeCommandArgs args;
+        args.epochMs = request["epochMs"] | 0LL;
+        args.timezoneOffsetMinutes = request["timezoneOffsetMinutes"] | 420;
+        const Runtime::RuntimeResult result = Runtime::runtimeDispatcher().executeSetTime(args);
+        sendStatus(
+            result.success,
+            result.success ? "time_synchronized" : "time_sync_failed",
+            requestId
         );
-        sendStatus(ok, ok ? "time_synchronized" : "time_sync_failed", requestId);
         return;
     }
 
