@@ -11,6 +11,7 @@
 #include "display_studio/core/logger.h"
 #include "display_studio/device/device_identity.h"
 #include "display_studio/project/project_manager.h"
+#include "display_studio/runtime/runtime_dispatcher.h"
 #include "display_studio/runtime/runtime_info.h"
 #include "display_studio/runtime/scene_runtime.h"
 #include "display_studio/runtime/time_service.h"
@@ -153,7 +154,14 @@ void sendDeviceInfo() {
 
 void sendRuntimeInfo(const String& requestId) {
     JsonDocument response;
-    Runtime::buildRuntimeInfo(response);
+    const Runtime::RuntimeResult result = Runtime::runtimeDispatcher().execute(
+        Runtime::RuntimeCommand::GetRuntimeInfo,
+        &response
+    );
+    if (!result.success) {
+        sendStatus(false, "runtime_info_failed", requestId);
+        return;
+    }
     if (!requestId.isEmpty()) {
         response["requestId"] = requestId;
     }
