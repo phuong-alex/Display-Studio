@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <ArduinoJson.h>
 
 #include "display_studio/runtime/runtime_command.h"
 #include "display_studio/runtime/runtime_context.h"
@@ -16,7 +17,10 @@ struct RuntimeResult {
 
 class RuntimeDispatcher {
 public:
-    RuntimeResult execute(RuntimeCommand command);
+    RuntimeResult execute(
+        RuntimeCommand command,
+        JsonDocument* output = nullptr
+    );
 };
 
 RuntimeDispatcher& runtimeDispatcher();
