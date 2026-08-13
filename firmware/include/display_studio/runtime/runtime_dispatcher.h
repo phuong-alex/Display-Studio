@@ -15,11 +15,20 @@ struct RuntimeResult {
     uint32_t elapsedMs = 0;
 };
 
+struct SetTimeCommandArgs {
+    int64_t epochMs = 0;
+    int timezoneOffsetMinutes = 420;
+};
+
 class RuntimeDispatcher {
 public:
     RuntimeResult execute(
         RuntimeCommand command,
         JsonDocument* output = nullptr
+    );
+
+    RuntimeResult executeSetTime(
+        const SetTimeCommandArgs& args
     );
 };
 
