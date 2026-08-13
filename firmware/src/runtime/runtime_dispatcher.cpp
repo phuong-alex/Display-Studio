@@ -2,6 +2,7 @@
 #include "display_studio/core/logger.h"
 #include "display_studio/runtime/runtime_dispatcher.h"
 #include "display_studio/runtime/runtime_info.h"
+#include "display_studio/runtime/scene_runtime.h"
 #include "display_studio/runtime/time_service.h"
 
 namespace DisplayStudio::Runtime {
@@ -38,22 +39,14 @@ RuntimeResult RuntimeDispatcher::execute(RuntimeCommand command, JsonDocument* o
 
     if (command == RuntimeCommand::GetRuntimeInfo && output != nullptr) {
         buildRuntimeInfo(*output);
-        return finishResult(
-            command,
-            context,
-            true,
-            RuntimeError::None,
-            startedAt
-        );
+        return finishResult(command, context, true, RuntimeError::None, startedAt);
     }
 
     return finishResult(
         command,
         context,
         false,
-        command == RuntimeCommand::GetRuntimeInfo
-            ? RuntimeError::InvalidState
-            : RuntimeError::Unknown,
+        command == RuntimeCommand::GetRuntimeInfo ? RuntimeError::InvalidState : RuntimeError::Unknown,
         startedAt
     );
 }
@@ -65,16 +58,29 @@ RuntimeResult RuntimeDispatcher::executeSetTime(const SetTimeCommandArgs& args) 
 
     Core::Logger::info("[RUNTIME] Execute: " + String(runtimeCommandName(command)));
 
-    const bool ok = timeService().setFromBrowser(
-        args.epochMs,
-        args.timezoneOffsetMinutes
-    );
-
+    const bool ok = timeService().setFromBrowser(args.epochMs, args.timezoneOffsetMinutes);
     return finishResult(
         command,
         context,
         ok,
         ok ? RuntimeError::None : RuntimeError::Unknown,
+        startedAt
+    );
+}
+
+RuntimeResult RuntimeDispatcher::executeApply() {
+    RuntimeContext& context = runtimeContext();
+    const uint32_t startedAt = millis();
+    const RuntimeCommand command = RuntimeCommand::Apply;
+
+    Core::Logger::info("[RUNTIME] Execute: " + String(runtimeCommandName(command)));
+
+    const bool rendered = sceneRuntime().renderNow();
+    return finishResult(
+        command,
+        context,
+        rendered,
+        rendered ? RuntimeError::None : RuntimeError::RendererFailure,
         startedAt
     );
 }
