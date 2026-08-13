@@ -30,6 +30,8 @@ public:
     RuntimeResult executeSetTime(
         const SetTimeCommandArgs& args
     );
+
+    RuntimeResult executeApply();
 };
 
 RuntimeDispatcher& runtimeDispatcher();
