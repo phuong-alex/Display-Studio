@@ -11,6 +11,7 @@
 #include "display_studio/core/logger.h"
 #include "display_studio/device/device_identity.h"
 #include "display_studio/project/project_manager.h"
+#include "display_studio/runtime/runtime_info.h"
 #include "display_studio/runtime/scene_runtime.h"
 #include "display_studio/runtime/time_service.h"
 #include "display_studio/transport/ble_transport.h"
@@ -134,6 +135,7 @@ void sendDeviceInfo() {
     response["display"]["partialRefresh"] = false;
     JsonArray capabilities = response["capabilities"].to<JsonArray>();
     capabilities.add("device-info");
+    capabilities.add("runtime-capabilities-v1");
     capabilities.add("persistent-project");
     capabilities.add("multiple-scenes");
     capabilities.add("scene-activation");
@@ -146,6 +148,15 @@ void sendDeviceInfo() {
     capabilities.add("ble-stop-and-wait-v1");
     capabilities.add("ble-queued-runtime-v1");
     capabilities.add("streaming-project-upload-v1");
+    enqueueJson(response);
+}
+
+void sendRuntimeInfo(const String& requestId) {
+    JsonDocument response;
+    Runtime::buildRuntimeInfo(response);
+    if (!requestId.isEmpty()) {
+        response["requestId"] = requestId;
+    }
     enqueueJson(response);
 }
 
@@ -189,6 +200,7 @@ void handleLine(const String& line) {
     Core::Logger::info("BLE command executing: " + command + (requestId.isEmpty() ? "" : " [" + requestId + "]"));
 
     if (command == "get_info") { sendDeviceInfo(); return; }
+    if (command == "get_runtime_info") { sendRuntimeInfo(requestId); return; }
     if (command == "get_project") { sendStoredProject(); return; }
     if (command == "get_config") { sendStoredConfigCompatibility(); return; }
     if (command == "ping") { sendStatus(true, "pong", requestId); return; }
